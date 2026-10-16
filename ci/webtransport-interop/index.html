@@ -143,7 +143,9 @@
         });
 
         await step("datagram_echo", async () => {
-          const writer = wt.datagrams.writable.getWriter();
+          // Newer versions of the API replaced `writable` with `createWritable()`.
+          const writable = wt.datagrams.createWritable ? wt.datagrams.createWritable() : wt.datagrams.writable;
+          const writer = writable.getWriter();
           const reader = wt.datagrams.readable.getReader();
           const payload = new TextEncoder().encode("hello over datagram");
           // Datagrams are unreliable, so keep sending until one comes back.
