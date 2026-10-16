@@ -14,8 +14,6 @@ jobs:
     name: ${{ matrix.browser }} (${{ matrix.mode }}, drafts ${{ matrix.drafts || 'all' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    # Informational jobs record browser behaviour that is expected to fail today.
-    continue-on-error: ${{ matrix.informational || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -27,17 +25,11 @@ jobs:
             browser: safari
             mode: hash
           # Safari 26 offers drafts 07 and 13, but cancels its CONNECT unless the server
-          # advertises draft 07, so a server offering only draft 13 fails. That job should start
-          # passing once Safari accepts draft 13 on its own.
+          # advertises draft 07.
           - os: macos-26
             browser: safari
             mode: trusted
             drafts: "02,07"
-          - os: macos-26
-            browser: safari
-            mode: trusted
-            drafts: "02,13"
-            informational: true
           - os: ubuntu-latest
             browser: chrome
             mode: hash
