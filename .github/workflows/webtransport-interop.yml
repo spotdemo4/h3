@@ -1,0 +1,63 @@
+name: WebTransport browser interop
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  interop:
+    name: ${{ matrix.browser }} (${{ matrix.mode }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-26
+            browser: safari
+            mode: trusted
+          - os: macos-26
+            browser: safari
+            mode: hash
+          - os: ubuntu-latest
+            browser: chrome
+            mode: hash
+          - os: ubuntu-latest
+            browser: firefox
+            mode: hash
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Show browser versions
+        run: |
+          case "${{ matrix.browser }}" in
+            safari)
+              sw_vers
+              defaults read /Applications/Safari.app/Contents/Info.plist CFBundleShortVersionString
+              ;;
+            chrome) google-chrome --version ;;
+            firefox) firefox --version ;;
+          esac
+      - name: Enable safaridriver
+        if: matrix.browser == 'safari'
+        run: sudo safaridriver --enable
+      - name: Build server
+        run: cargo build --example webtransport_server
+      - name: Run interop test
+        env:
+          WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop
+        run: ci/webtransport-interop/interop.sh ${{ matrix.browser }} ${{ matrix.mode }}
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wt-interop-${{ matrix.browser }}-${{ matrix.mode }}-${{ matrix.os }}
+          path: ${{ runner.temp }}/wt-interop

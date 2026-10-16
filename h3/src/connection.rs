@@ -586,6 +586,8 @@ where
             Ok(Some(Frame::Settings(settings))) => {
                 if !self.got_peer_settings {
                     // Received settings frame
+                    #[cfg(feature = "tracing")]
+                    tracing::debug!("Received peer settings: {:x?}", settings);
 
                     self.got_peer_settings = true;
                     self.set_settings((&settings).into());
