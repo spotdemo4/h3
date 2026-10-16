@@ -11,7 +11,7 @@ env:
 
 jobs:
   interop:
-    name: ${{ matrix.browser }} (${{ matrix.mode }}, ${{ matrix.os }})
+    name: ${{ matrix.browser }} (${{ matrix.mode }}, drafts ${{ matrix.drafts || 'all' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -24,6 +24,15 @@ jobs:
           - os: macos-26
             browser: safari
             mode: hash
+          # Safari 26 offers drafts 07 and 13; check each on its own as well.
+          - os: macos-26
+            browser: safari
+            mode: trusted
+            drafts: "02,07"
+          - os: macos-26
+            browser: safari
+            mode: trusted
+            drafts: "02,13"
           - os: ubuntu-latest
             browser: chrome
             mode: hash
@@ -54,10 +63,11 @@ jobs:
       - name: Run interop test
         env:
           WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop
+          WT_DRAFTS: ${{ matrix.drafts }}
         run: ci/webtransport-interop/interop.sh ${{ matrix.browser }} ${{ matrix.mode }}
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wt-interop-${{ matrix.browser }}-${{ matrix.mode }}-${{ matrix.os }}
+          name: wt-interop-${{ matrix.browser }}-${{ matrix.mode }}-drafts-${{ matrix.drafts || 'all' }}
           path: ${{ runner.temp }}/wt-interop

@@ -7,6 +7,7 @@
 #   trusted  the test CA is added to the system trust store (macOS only, needs sudo)
 #
 # Logs and the JSON result are written to $WT_INTEROP_OUT (default: target/wt-interop).
+# $WT_DRAFTS optionally sets the WebTransport drafts the server advertises, e.g. "02,07".
 set -euo pipefail
 
 browser=${1:?usage: interop.sh <safari|chrome|firefox> [hash|trusted]}
@@ -46,7 +47,7 @@ server=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,s
 
 NO_COLOR=1 RUST_LOG=${RUST_LOG:-h3=debug,h3_webtransport=debug,h3_datagram=debug,webtransport_server=debug} \
     "$server" --listen "[::]:4433" --cert "$out/certs/leaf.der" --key "$out/certs/key.der" \
-    >"$out/server.log" 2>&1 &
+    ${WT_DRAFTS:+--drafts "$WT_DRAFTS"} >"$out/server.log" 2>&1 &
 pids+=($!)
 
 python3 -m http.server 8000 --bind 127.0.0.1 --directory "$here" >"$out/http.log" 2>&1 &
@@ -90,7 +91,7 @@ sleep 1
 cleanup
 
 echo "::group::SETTINGS and CONNECT seen by the server"
-grep -E -A12 "Sending server settings|Received peer settings|Unsupported setting|new request|ERROR|WARN" "$out/server.log" | head -200 || true
+grep -E "Received peer settings|Unsupported setting|Using WebTransport|Established|ERROR|WARN" "$out/server.log" | head -100 || true
 echo "::endgroup::"
 
 exit "$status"
