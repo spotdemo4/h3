@@ -69,23 +69,35 @@ def main():
     print(f"browser: {session['capabilities'].get('browserName')} {session['capabilities'].get('browserVersion')}")
 
     results = None
+    printed = 0
     try:
         driver.call("POST", f"/session/{sid}/url", {"url": args.page})
         deadline = time.monotonic() + args.timeout
         while time.monotonic() < deadline:
-            results = driver.call(
-                "POST", f"/session/{sid}/execute/sync", {"script": "return window.__results || null", "args": []}
-            )
+            try:
+                state = driver.call(
+                    "POST",
+                    f"/session/{sid}/execute/sync",
+                    {
+                        "script": "return [window.__results || null, document.getElementById('log').textContent]",
+                        "args": [],
+                    },
+                )
+            except RuntimeError as err:
+                # For example, the browser crashed. Steps logged so far were printed already.
+                results = {"ok": False, "steps": [], "error": f"lost the page: {err}"}
+                break
+            results, log = state
+            # Print progress as it happens, so it survives the page being lost.
+            lines = log.splitlines()
+            for line in lines[printed:]:
+                print(f"page: {line}", flush=True)
+            printed = len(lines)
             if results:
                 break
             time.sleep(0.5)
         if not results:
-            log = driver.call(
-                "POST",
-                f"/session/{sid}/execute/sync",
-                {"script": "return document.getElementById('log').textContent", "args": []},
-            )
-            results = {"ok": False, "steps": [], "error": "page did not finish", "log": log}
+            results = {"ok": False, "steps": [], "error": "page did not finish"}
     finally:
         try:
             driver.call("DELETE", f"/session/{sid}")

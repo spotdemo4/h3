@@ -172,8 +172,14 @@
         await step("drain", async () => {
           const answer = await command(wt, "drain");
           if (answer !== "ok") throw new Error(`unexpected answer ${JSON.stringify(answer)}`);
+          // Browsers are not required to act on WT_DRAIN_SESSION: Chrome has no
+          // WebTransport.draining and Firefox ignores the capsule, so this only reports it.
           if (!("draining" in wt)) return "WebTransport.draining is not supported";
-          await wt.draining;
+          const drained = await Promise.race([
+            wt.draining.then(() => true),
+            new Promise((resolve) => setTimeout(() => resolve(false), 3000)),
+          ]);
+          return drained ? "WebTransport.draining resolved" : "WebTransport.draining did not resolve";
         });
 
         await step("server_close", async () => {
