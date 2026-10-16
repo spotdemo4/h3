@@ -78,6 +78,11 @@ jobs:
             \( -iname '*webkit*' -o -iname '*safari*' -o -iname '*webcontent*' -o -iname '*networking*' \) \
             -exec cp {} "$RUNNER_TEMP/wt-interop/crashes/" \; 2>/dev/null || true
           ls -la "$RUNNER_TEMP/wt-interop/crashes"
+          ls -la ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports 2>/dev/null || true
+          log show --last 10m --style compact \
+            --predicate 'process BEGINSWITH "com.apple.WebKit" OR process == "Safari" OR process == "safaridriver" OR process == "ReportCrash"' \
+            2>/dev/null | tail -n 20000 >"$RUNNER_TEMP/wt-interop/crashes/unified.log" || true
+          grep -iE "crash|terminat|jetsam|exception|webtransport" "$RUNNER_TEMP/wt-interop/crashes/unified.log" | tail -n 80 || true
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4

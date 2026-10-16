@@ -338,48 +338,54 @@ async fn handle_session_and_echo_all_inbound_messages(
     let closed = session.closed();
     pin!(closed);
 
-    loop {
-        tokio::select! {
-            outcome = &mut closed => {
-                tracing::info!("Session closed: {outcome:?}");
-                break;
-            }
-            datagram = datagram_reader.read_datagram() => {
-                let datagram = match datagram {
-                    Ok(datagram) => datagram,
-                    Err(err) => {
-                        tracing::error!("Failed to read datagram: {err:?}");
-                        break;
-                    }
-                };
-                tracing::info!("Received datagram: {datagram:?}");
-                let datagram = datagram.into_payload();
-                datagram_sender.send_datagram(datagram)?;
-            }
-            uni_stream = session.accept_uni() => {
-                let (id, stream) = uni_stream?.unwrap();
-
-                let send = session.open_uni(id).await?;
-                tokio::spawn( async move { log_result!(echo_stream(send, stream).await); });
-            }
-            stream = session.accept_bi() => {
-                if let Some(resolver) = stream? {
-                    let session = session.clone();
-                    tokio::spawn(async move {
-                        log_result!(async move {
-                            if let server::AcceptedBi::BidiStream(_, stream) = resolver.resolve().await? {
-                                handle_client_bidi(session, stream).await?;
-                            }
-                            Ok::<_, anyhow::Error>(())
-                        }.await);
-                    });
+    let result: anyhow::Result<bool> = async {
+        loop {
+            tokio::select! {
+                biased;
+                outcome = &mut closed => {
+                    tracing::info!("Session closed: {outcome:?}");
+                    return Ok(true);
                 }
-            }
-            else => {
-                break
+                datagram = datagram_reader.read_datagram() => {
+                    let datagram = datagram?;
+                    tracing::info!("Received datagram: {datagram:?}");
+                    let datagram = datagram.into_payload();
+                    datagram_sender.send_datagram(datagram)?;
+                }
+                uni_stream = session.accept_uni() => {
+                    let Some((id, stream)) = uni_stream? else {
+                        return Ok(false);
+                    };
+
+                    let send = session.open_uni(id).await?;
+                    tokio::spawn( async move { log_result!(echo_stream(send, stream).await); });
+                }
+                stream = session.accept_bi() => {
+                    if let Some(resolver) = stream? {
+                        let session = session.clone();
+                        tokio::spawn(async move {
+                            log_result!(async move {
+                                if let server::AcceptedBi::BidiStream(_, stream) = resolver.resolve().await? {
+                                    handle_client_bidi(session, stream).await?;
+                                }
+                                Ok::<_, anyhow::Error>(())
+                            }.await);
+                        });
+                    }
+                }
             }
         }
     }
+    .await;
+
+    if !matches!(result, Ok(true)) {
+        // The connection may have failed because the client closed it right after closing the
+        // session, so report how the session ended if that is known.
+        if let Ok(outcome) = tokio::time::timeout(Duration::from_secs(1), &mut closed).await {
+            tracing::info!("Session closed: {outcome:?}");
+        }
+    }
+    result?;
 
     tracing::info!("Finished handling session");
 
