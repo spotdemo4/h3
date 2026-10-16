@@ -327,6 +327,10 @@ where
     /// The message is truncated to 1024 bytes. Streams of the session are reset with
     /// [`WT_SESSION_GONE`](crate::WT_SESSION_GONE) and no new streams can be opened. Does nothing
     /// if the session has already terminated.
+    ///
+    /// The server's side of the CONNECT stream is only finished by [`Self::closed`], once the client
+    /// has closed its side in response. Await `closed()` before dropping the session: dropping it
+    /// closes the connection, which can lose the close.
     pub async fn close(&self, code: u32, reason: &str) -> Result<(), StreamError>
     where
         B: From<Bytes>,
@@ -343,14 +347,17 @@ where
         if send.closed {
             return Ok(());
         }
-        send.closed = true;
         send.stream
             .send_data(capsule::encode_close_session(code, reason).into())
-            .await?;
+            .await
         //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-16#section-6
+        //= type=exception
         //# An endpoint that sends a WT_CLOSE_SESSION capsule MUST immediately
         //# send a FIN on the CONNECT Stream.
-        send.stream.finish().await
+        //
+        // Safari 26 crashes its network process when the FIN arrives right after the capsule, so
+        // the FIN waits until the client has closed its side, which it must do in response to the
+        // capsule. See `closed()`.
     }
 
     /// Asks the client to close the session gracefully, for example before the server shuts down.
@@ -388,7 +395,14 @@ where
             .expect("session has terminated")
             .clone();
 
-        // Close our side of the CONNECT stream in response, unless we closed the session.
+        // After a close from the server, wait for the client to close its side of the CONNECT
+        // stream. This is already the case after a close from the client.
+        //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-16#section-6
+        //# To avoid this, the endpoint SHOULD wait until all CONNECT streams have
+        //# been closed by the peer before sending the CONNECTION_CLOSE
+        poll_fn(|cx| self.poll_connect_stream_end(cx)).await;
+
+        // Then close our side.
         let mut send = self.connect_send.lock().await;
         if !send.closed {
             send.closed = true;
@@ -404,12 +418,6 @@ where
                 }
             }
         }
-        drop(send);
-
-        //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-16#section-6
-        //# To avoid this, the endpoint SHOULD wait until all CONNECT streams have
-        //# been closed by the peer before sending the CONNECTION_CLOSE
-        poll_fn(|cx| self.poll_connect_stream_end(cx)).await;
 
         outcome
     }
