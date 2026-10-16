@@ -11,29 +11,35 @@ env:
 
 jobs:
   interop:
-    name: ${{ matrix.browser }} (${{ matrix.mode }}, drafts ${{ matrix.drafts || 'all' }})
+    # The README's browser badges match the Chrome, Firefox and Safari job names.
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-26
+          - name: Safari
+            os: macos-26
             browser: safari
             mode: trusted
-          - os: macos-26
+          - name: Safari (certificate hashes)
+            os: macos-26
             browser: safari
             mode: hash
           # Safari 26 offers drafts 07 and 13, but cancels its CONNECT unless the server
           # advertises draft 07.
-          - os: macos-26
+          - name: Safari (drafts 02 and 07)
+            os: macos-26
             browser: safari
             mode: trusted
             drafts: "02,07"
-          - os: ubuntu-latest
+          - name: Chrome
+            os: ubuntu-latest
             browser: chrome
             mode: hash
-          - os: ubuntu-latest
+          - name: Firefox
+            os: ubuntu-latest
             browser: firefox
             mode: hash
     steps:
