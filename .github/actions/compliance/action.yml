@@ -63,9 +63,9 @@ runs:
         git diff --staged --quiet || \
         git commit -m "${{ github.triggering_actor }}-${SHA}-${{ github.job }}#${{ github.run_number }}"
 
-    # publish report only when pushing to master
+    # publish report only when pushing to master, and not from forks
     - name: Push to gh-pages
-      if: github.ref == 'refs/heads/master'
+      if: github.ref == 'refs/heads/master' && github.repository == 'hyperium/h3'
       uses: ad-m/github-push-action@v1
       with:
         github_token: ${{ github.token }}
