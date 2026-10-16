@@ -14,7 +14,7 @@ license = "MIT"
 
 [dependencies]
 bytes = "1"
-futures-util = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 http = "1"
 pin-project-lite = { version = "0.2", default-features = false }
 tracing = "0.1.37"
@@ -35,4 +35,4 @@ quinn = { version = "0.11", default-features = false, features = [
 ] }
 rcgen = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std"] }
-tokio = { version = "1", features = ["rt", "macros", "time"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "io-util"] }
