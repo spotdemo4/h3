@@ -70,6 +70,14 @@ jobs:
           WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop
           WT_DRAFTS: ${{ matrix.drafts }}
         run: ci/webtransport-interop/interop.sh ${{ matrix.browser }} ${{ matrix.mode }}
+      - name: Collect crash reports
+        if: always() && matrix.browser == 'safari'
+        run: |
+          mkdir -p "$RUNNER_TEMP/wt-interop/crashes"
+          find ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports -newer "$RUNNER_TEMP/wt-interop/certs/ca.pem" \
+            \( -iname '*webkit*' -o -iname '*safari*' -o -iname '*webcontent*' -o -iname '*networking*' \) \
+            -exec cp {} "$RUNNER_TEMP/wt-interop/crashes/" \; 2>/dev/null || true
+          ls -la "$RUNNER_TEMP/wt-interop/crashes"
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
