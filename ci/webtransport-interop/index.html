@@ -1,0 +1,186 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>WebTransport interop</title>
+  </head>
+  <body>
+    <pre id="log"></pre>
+    <script>
+      // Exercises a WebTransport session against examples/webtransport_server.rs, which echoes
+      // client streams and datagrams and opens one bidirectional stream of its own.
+      //
+      // Query parameters:
+      //   url  - the WebTransport URL, e.g. https://localhost:4433
+      //   hash - optional hex SHA-256 of the server certificate, for serverCertificateHashes
+      //
+      // The outcome is stored in window.__results for the WebDriver runner to collect.
+      const params = new URLSearchParams(location.search);
+      const STEP_TIMEOUT_MS = 15000;
+      const SERVER_BIDI_MESSAGE = "Hello from a server initiated bidi stream";
+
+      const logEl = document.getElementById("log");
+      function log(msg) {
+        logEl.textContent += msg + "\n";
+        console.log(msg);
+      }
+
+      function withTimeout(promise, what) {
+        let timer;
+        const timeout = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), STEP_TIMEOUT_MS);
+        });
+        return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+      }
+
+      function hexToBytes(hex) {
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < bytes.length; i++) {
+          bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+        }
+        return bytes;
+      }
+
+      async function readAll(readable) {
+        const reader = readable.getReader();
+        const chunks = [];
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+        const len = chunks.reduce((n, c) => n + c.length, 0);
+        const out = new Uint8Array(len);
+        let off = 0;
+        for (const c of chunks) {
+          out.set(c, off);
+          off += c.length;
+        }
+        return new TextDecoder().decode(out);
+      }
+
+      async function writeAll(writable, text) {
+        const writer = writable.getWriter();
+        await writer.write(new TextEncoder().encode(text));
+        await writer.close();
+      }
+
+      function describe(err) {
+        if (!err) return String(err);
+        const parts = [err.name, err.message];
+        if (err.source !== undefined) parts.push(`source=${err.source}`);
+        if (err.streamErrorCode !== undefined && err.streamErrorCode !== null) {
+          parts.push(`streamErrorCode=${err.streamErrorCode}`);
+        }
+        return parts.filter(Boolean).join(": ");
+      }
+
+      async function run() {
+        const results = { userAgent: navigator.userAgent, steps: [] };
+        let failed = false;
+
+        async function step(name, fn) {
+          if (failed) {
+            results.steps.push({ name, ok: false, skipped: true });
+            return;
+          }
+          const start = performance.now();
+          try {
+            const detail = await withTimeout(fn(), name);
+            const ms = Math.round(performance.now() - start);
+            results.steps.push({ name, ok: true, ms, detail });
+            log(`PASS ${name} (${ms} ms)${detail ? ": " + detail : ""}`);
+          } catch (err) {
+            const ms = Math.round(performance.now() - start);
+            results.steps.push({ name, ok: false, ms, error: describe(err) });
+            log(`FAIL ${name} (${ms} ms): ${describe(err)}`);
+            failed = true;
+          }
+        }
+
+        const url = params.get("url");
+        const options = {};
+        if (params.get("hash")) {
+          options.serverCertificateHashes = [{ algorithm: "sha-256", value: hexToBytes(params.get("hash")) }];
+        }
+
+        let wt;
+        let closeInfo = null;
+        await step("ready", async () => {
+          wt = new WebTransport(url, options);
+          wt.closed.then(
+            (info) => (closeInfo = `closed: ${JSON.stringify(info)}`),
+            (err) => (closeInfo = `closed with error: ${describe(err)}`),
+          );
+          await wt.ready;
+        });
+
+        await step("client_bidi_echo", async () => {
+          const stream = await wt.createBidirectionalStream();
+          const [, echoed] = await Promise.all([
+            writeAll(stream.writable, "hello over bidi"),
+            readAll(stream.readable),
+          ]);
+          if (echoed !== "hello over bidi") throw new Error(`unexpected echo ${JSON.stringify(echoed)}`);
+        });
+
+        await step("client_uni_echo", async () => {
+          const stream = await wt.createUnidirectionalStream();
+          await writeAll(stream, "hello over uni");
+          const reader = wt.incomingUnidirectionalStreams.getReader();
+          const { value: incoming } = await reader.read();
+          reader.releaseLock();
+          const echoed = await readAll(incoming);
+          if (echoed !== "hello over uni") throw new Error(`unexpected echo ${JSON.stringify(echoed)}`);
+        });
+
+        await step("server_bidi", async () => {
+          const reader = wt.incomingBidirectionalStreams.getReader();
+          const { value: stream } = await reader.read();
+          reader.releaseLock();
+          const [received] = await Promise.all([readAll(stream.readable), writeAll(stream.writable, "thanks")]);
+          if (received !== SERVER_BIDI_MESSAGE) throw new Error(`unexpected message ${JSON.stringify(received)}`);
+        });
+
+        await step("datagram_echo", async () => {
+          const writer = wt.datagrams.writable.getWriter();
+          const reader = wt.datagrams.readable.getReader();
+          const payload = new TextEncoder().encode("hello over datagram");
+          // Datagrams are unreliable, so keep sending until one comes back.
+          const interval = setInterval(() => writer.write(payload).catch(() => {}), 250);
+          try {
+            await writer.write(payload);
+            const { value } = await reader.read();
+            const echoed = new TextDecoder().decode(value);
+            if (echoed !== "hello over datagram") throw new Error(`unexpected echo ${JSON.stringify(echoed)}`);
+          } finally {
+            clearInterval(interval);
+            writer.releaseLock();
+            reader.releaseLock();
+          }
+        });
+
+        await step("close", async () => {
+          wt.close({ closeCode: 0, reason: "done" });
+          await wt.closed;
+        });
+
+        results.ok = !failed;
+        results.closeInfo = closeInfo;
+        window.__results = results;
+      }
+
+      if (typeof WebTransport === "undefined") {
+        window.__results = {
+          userAgent: navigator.userAgent,
+          ok: false,
+          steps: [{ name: "ready", ok: false, error: "WebTransport is not available in this browser" }],
+        };
+      } else {
+        run().catch((err) => {
+          window.__results = { userAgent: navigator.userAgent, ok: false, steps: [], error: describe(err) };
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -554,7 +554,7 @@ impl Settings {
                 //# Endpoints MUST NOT consider such settings to have
                 //# any meaning upon receipt.
                 #[cfg(feature = "tracing")]
-                tracing::debug!("Unsupported setting: {:#x?}", identifier);
+                tracing::debug!("Unsupported setting: {:#x} = {}", identifier.0, value);
             }
         }
         Ok(settings)
