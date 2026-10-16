@@ -162,9 +162,35 @@
           }
         });
 
-        await step("close", async () => {
-          wt.close({ closeCode: 0, reason: "done" });
-          await wt.closed;
+        // Sends a command to the server on a new bidirectional stream and returns its answer.
+        async function command(transport, text) {
+          const stream = await transport.createBidirectionalStream();
+          const [, answer] = await Promise.all([writeAll(stream.writable, text), readAll(stream.readable)]);
+          return answer;
+        }
+
+        await step("drain", async () => {
+          const answer = await command(wt, "drain");
+          if (answer !== "ok") throw new Error(`unexpected answer ${JSON.stringify(answer)}`);
+          if (!("draining" in wt)) return "WebTransport.draining is not supported";
+          await wt.draining;
+        });
+
+        await step("server_close", async () => {
+          // The server may close the session before the answer arrives.
+          command(wt, "close:4000:server says bye").catch(() => {});
+          const info = await wt.closed;
+          if (info.closeCode !== 4000 || info.reason !== "server says bye") {
+            throw new Error(`unexpected close ${JSON.stringify(info)}`);
+          }
+        });
+
+        // The server checks that it saw this close; see interop.sh.
+        await step("client_close", async () => {
+          const second = new WebTransport(url, options);
+          await second.ready;
+          second.close({ closeCode: 7, reason: "client says bye" });
+          await second.closed;
         });
 
         results.ok = !failed;

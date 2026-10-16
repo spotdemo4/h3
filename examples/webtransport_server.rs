@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use h3::{
     ext::{Protocol, WebTransportDraft},
-    quic::{self},
     server::Connection,
 };
 use h3_quinn::quinn::{self, crypto::rustls::QuicServerConfig};
@@ -287,10 +286,45 @@ where
     Ok(())
 }
 
+/// Handles a bidirectional stream from the client.
+///
+/// Echoes what the client sends, except for these commands, which are answered with "ok":
+/// - `drain`: asks the client to close the session gracefully
+/// - `close:<code>:<reason>`: closes the session
+async fn handle_client_bidi<S>(
+    session: Arc<WebTransportSession<h3_quinn::Connection, Bytes>>,
+    mut stream: S,
+) -> anyhow::Result<()>
+where
+    S: Unpin + AsyncRead + AsyncWrite,
+{
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await?;
+    let message = String::from_utf8_lossy(&buf);
+
+    if message == "drain" {
+        session.drain().await?;
+        stream.write_all(b"ok").await?;
+        stream.shutdown().await?;
+    } else if let Some(command) = message.strip_prefix("close:") {
+        let (code, reason) = command
+            .split_once(':')
+            .context("expected close:<code>:<reason>")?;
+        stream.write_all(b"ok").await?;
+        stream.shutdown().await?;
+        tracing::info!("Closing session with code {code}: {reason}");
+        session.close(code.parse()?, reason).await?;
+    } else {
+        send_chunked(stream, Bytes::from(buf)).await?;
+    }
+    Ok(())
+}
+
 /// This method will echo all inbound datagrams, unidirectional and bidirectional streams.
 async fn handle_session_and_echo_all_inbound_messages(
     session: WebTransportSession<h3_quinn::Connection, Bytes>,
 ) -> anyhow::Result<()> {
+    let session = Arc::new(session);
     let session_id = session.session_id();
 
     // This will open a bidirectional stream and send a message to the client right after connecting!
@@ -301,8 +335,15 @@ async fn handle_session_and_echo_all_inbound_messages(
     let mut datagram_reader = session.datagram_reader();
     let mut datagram_sender = session.datagram_sender();
 
+    let closed = session.closed();
+    pin!(closed);
+
     loop {
         tokio::select! {
+            outcome = &mut closed => {
+                tracing::info!("Session closed: {outcome:?}");
+                break;
+            }
             datagram = datagram_reader.read_datagram() => {
                 let datagram = match datagram {
                     Ok(datagram) => datagram,
@@ -323,11 +364,11 @@ async fn handle_session_and_echo_all_inbound_messages(
             }
             stream = session.accept_bi() => {
                 if let Some(resolver) = stream? {
+                    let session = session.clone();
                     tokio::spawn(async move {
                         log_result!(async move {
                             if let server::AcceptedBi::BidiStream(_, stream) = resolver.resolve().await? {
-                                let (send, recv) = quic::BidiStream::split(stream);
-                                echo_stream(send, recv).await?;
+                                handle_client_bidi(session, stream).await?;
                             }
                             Ok::<_, anyhow::Error>(())
                         }.await);

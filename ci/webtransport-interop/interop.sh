@@ -90,8 +90,13 @@ python3 "$here/run.py" --driver http://127.0.0.1:4444 --browser "$browser" --pag
 sleep 1
 cleanup
 
+if [ "$status" = 0 ] && ! grep -q 'Session closed: Ok(CloseInfo { code: 7, reason: "client says bye" })' "$out/server.log"; then
+    echo "FAIL client_close: the server did not see the close from the client"
+    status=1
+fi
+
 echo "::group::SETTINGS and CONNECT seen by the server"
-grep -E "Received peer settings|Unsupported setting|Using WebTransport|Established|ERROR|WARN" "$out/server.log" | head -100 || true
+grep -E "Received peer settings|Unsupported setting|Using WebTransport|Established|Session closed|Closing session|ERROR|WARN" "$out/server.log" | head -100 || true
 echo "::endgroup::"
 
 exit "$status"
