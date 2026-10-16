@@ -5,7 +5,7 @@ mod common;
 use std::time::Duration;
 
 use bytes::Bytes;
-use common::{close_capsule, drain_capsule, read_to_end, setup};
+use common::{close_capsule, drain_capsule, read_to_end, recv_bytes, setup};
 use h3::error::{Code, StreamError};
 use h3_webtransport::{
     server::{CloseInfo, SessionError},
@@ -66,12 +66,14 @@ async fn server_closes() {
     setup.session.close(7, "done").await.unwrap();
 
     assert_eq!(
-        read_to_end(&mut setup.stream).await,
-        close_capsule(7, b"done")
+        recv_bytes(&mut setup.stream).await,
+        Some(close_capsule(7, b"done"))
     );
     setup.stream.finish().await.unwrap();
     let outcome = timeout(TIMEOUT, setup.session.closed()).await.unwrap();
     assert_eq!(outcome.unwrap(), info(7, "done"));
+    // The server finishes its side after the client did
+    assert_eq!(read_to_end(&mut setup.stream).await, Bytes::new());
 
     // Closing again does nothing
     setup.session.close(8, "again").await.unwrap();
@@ -215,11 +217,18 @@ async fn closed_waits_for_the_client_to_close_the_connect_stream() {
     let mut setup = setup().await;
     setup.session.close(7, "done").await.unwrap();
     assert_eq!(
-        read_to_end(&mut setup.stream).await,
-        close_capsule(7, b"done")
+        recv_bytes(&mut setup.stream).await,
+        Some(close_capsule(7, b"done"))
     );
 
-    // Dropping the connection now could lose the close, so closed() waits for the client.
+    // Safari 26 crashes if the FIN follows the capsule immediately, so it waits for the client.
+    assert!(
+        timeout(Duration::from_millis(100), setup.stream.recv_data())
+            .await
+            .is_err()
+    );
+
+    // Dropping the connection now could lose the close, so closed() waits for the client too.
     let session = setup.session.clone();
     let closed = tokio::spawn(async move { session.closed().await });
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -228,4 +237,5 @@ async fn closed_waits_for_the_client_to_close_the_connect_stream() {
     setup.stream.finish().await.unwrap();
     let outcome = timeout(TIMEOUT, closed).await.unwrap().unwrap();
     assert_eq!(outcome.unwrap(), info(7, "done"));
+    assert_eq!(read_to_end(&mut setup.stream).await, Bytes::new());
 }

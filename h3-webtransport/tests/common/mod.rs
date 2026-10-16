@@ -164,3 +164,10 @@ pub async fn read_to_end(stream: &mut ClientStream) -> Bytes {
     }
     out.freeze()
 }
+
+/// Receives the next chunk of data on the CONNECT stream, or `None` at its end
+pub async fn recv_bytes(stream: &mut ClientStream) -> Option<Bytes> {
+    use bytes::Buf;
+    let mut data = stream.recv_data().await.unwrap()?;
+    Some(data.copy_to_bytes(data.remaining()))
+}
