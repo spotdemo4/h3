@@ -11,11 +11,11 @@ jobs:
     # https://bugs.webkit.org/show_bug.cgi?id=327834
     name: Safari crash (${{ matrix.capture }})
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        capture: [crash-report, debugger]
+        capture: [crash-report]
     steps:
       - uses: actions/checkout@v5
       - name: Install Rust stable
@@ -75,6 +75,20 @@ jobs:
           grep -E "Network Process 0 crash|osanalyticshelper|Saved|\.ips" "$RUNNER_TEMP/capture/unified.log" | tail -n 40 || true
           echo "--- debugger output"
           cat "$RUNNER_TEMP/capture/lldb.txt" 2>/dev/null | head -n 200 || true
+      - name: Capture a sysdiagnose
+        if: always()
+        timeout-minutes: 20
+        run: |
+          # Includes the crash reports and recent logs, as Feedback Assistant asks for.
+          sudo sysdiagnose -u -f "$RUNNER_TEMP/capture" -A sysdiagnose-safari-webtransport-crash
+          sudo chmod -R a+r "$RUNNER_TEMP/capture"
+          ls -la "$RUNNER_TEMP/capture"
+      - name: Capture a Mac System Information Report
+        if: always()
+        timeout-minutes: 15
+        run: |
+          system_profiler -xml >"$RUNNER_TEMP/capture/SystemInformation.spx"
+          ls -la "$RUNNER_TEMP/capture/SystemInformation.spx"
       - name: Upload capture
         if: always()
         uses: actions/upload-artifact@v4
