@@ -1,91 +1,85 @@
 name: WebTransport browser interop
 on:
-  pull_request:
-  push:
-    branches:
-      - master
   workflow_dispatch:
 
 env:
   RUST_BACKTRACE: 1
 
 jobs:
-  interop:
-    name: ${{ matrix.browser }} (${{ matrix.mode }}, drafts ${{ matrix.drafts || 'all' }})
-    runs-on: ${{ matrix.os }}
+  crash:
+    # Reproduces the Safari network process crash and captures it, for
+    # https://bugs.webkit.org/show_bug.cgi?id=327834
+    name: Safari crash (${{ matrix.capture }})
+    runs-on: macos-26
     timeout-minutes: 30
-    # Informational jobs record browser behaviour that is expected to fail today.
-    continue-on-error: ${{ matrix.informational || false }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-26
-            browser: safari
-            mode: trusted
-          - os: macos-26
-            browser: safari
-            mode: hash
-          # Safari 26 offers drafts 07 and 13, but cancels its CONNECT unless the server
-          # advertises draft 07, so a server offering only draft 13 fails. That job should start
-          # passing once Safari accepts draft 13 on its own.
-          - os: macos-26
-            browser: safari
-            mode: trusted
-            drafts: "02,07"
-          - os: macos-26
-            browser: safari
-            mode: trusted
-            drafts: "02,13"
-            informational: true
-          - os: ubuntu-latest
-            browser: chrome
-            mode: hash
-          - os: ubuntu-latest
-            browser: firefox
-            mode: hash
+        capture: [crash-report, debugger]
     steps:
       - uses: actions/checkout@v5
       - name: Install Rust stable
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-      - name: Show browser versions
+      - name: Show versions and crash reporting state
         run: |
-          case "${{ matrix.browser }}" in
-            safari)
-              sw_vers
-              defaults read /Applications/Safari.app/Contents/Info.plist CFBundleShortVersionString
-              ;;
-            chrome) google-chrome --version ;;
-            firefox) firefox --version ;;
-          esac
+          sw_vers
+          defaults read /Applications/Safari.app/Contents/Info.plist CFBundleShortVersionString
+          defaults read /Applications/Safari.app/Contents/Info.plist CFBundleVersion
+          csrutil status || true
+          launchctl print system/com.apple.SubmitDiagInfo 2>&1 | head -3 || true
+          launchctl print system/com.apple.osanalytics.osanalyticshelper 2>&1 | head -3 || true
+          defaults read com.apple.CrashReporter 2>&1 || true
+      - name: Re-enable crash reporting
+        run: |
+          # The runner image unloads this daemon.
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.SubmitDiagInfo.plist || true
+          launchctl print system/com.apple.SubmitDiagInfo 2>&1 | head -3 || true
       - name: Enable safaridriver
-        if: matrix.browser == 'safari'
         run: sudo safaridriver --enable
       - name: Build server
         run: cargo build --example webtransport_server
+      - name: Attach a debugger to the network process
+        if: matrix.capture == 'debugger'
+        run: |
+          mkdir -p "$RUNNER_TEMP/capture"
+          sudo nohup lldb --batch \
+            -o "process attach --name com.apple.WebKit.Networking --waitfor" \
+            -o "process handle SIGPIPE -n false -p true -s false" \
+            -o "continue" \
+            -k "thread backtrace all" \
+            -k "register read" \
+            -k "image list" \
+            >"$RUNNER_TEMP/capture/lldb.txt" 2>&1 &
+          sleep 5
+          cat "$RUNNER_TEMP/capture/lldb.txt"
       - name: Run interop test
         env:
           WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop
-          WT_DRAFTS: ${{ matrix.drafts }}
-        run: ci/webtransport-interop/interop.sh ${{ matrix.browser }} ${{ matrix.mode }}
+        run: ci/webtransport-interop/interop.sh safari trusted || true
       - name: Collect crash reports
-        if: always() && matrix.browser == 'safari'
+        if: always()
         run: |
-          mkdir -p "$RUNNER_TEMP/wt-interop/crashes"
-          find ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports -newer "$RUNNER_TEMP/wt-interop/certs/ca.pem" \
-            \( -iname '*webkit*' -o -iname '*safari*' -o -iname '*webcontent*' -o -iname '*networking*' \) \
-            -exec cp {} "$RUNNER_TEMP/wt-interop/crashes/" \; 2>/dev/null || true
-          ls -la "$RUNNER_TEMP/wt-interop/crashes"
-          ls -la ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports 2>/dev/null || true
-          log show --last 10m --style compact \
-            --predicate 'process BEGINSWITH "com.apple.WebKit" OR process == "Safari" OR process == "safaridriver" OR process == "ReportCrash"' \
-            2>/dev/null | tail -n 20000 >"$RUNNER_TEMP/wt-interop/crashes/unified.log" || true
-          grep -iE "crash|terminat|jetsam|exception|webtransport" "$RUNNER_TEMP/wt-interop/crashes/unified.log" | tail -n 80 || true
-      - name: Upload logs
+          mkdir -p "$RUNNER_TEMP/capture"
+          # The crash report is written some time after the crash.
+          sleep 60
+          sudo find /Library/Logs/DiagnosticReports ~/Library/Logs/DiagnosticReports \
+            /private/var/root/Library/Logs/DiagnosticReports /private/var/db/DiagnosticReports \
+            -type f -newer "$RUNNER_TEMP/wt-interop/certs/ca.pem" -print -exec cp {} "$RUNNER_TEMP/capture/" \; 2>/dev/null || true
+          sudo chmod -R a+r "$RUNNER_TEMP/capture" || true
+          ls -la "$RUNNER_TEMP/capture"
+          log show --last 15m --style compact \
+            --predicate 'process BEGINSWITH "com.apple.WebKit" OR process == "Safari" OR process == "ReportCrash" OR process == "osanalyticshelper" OR process == "SubmitDiagInfo"' \
+            2>/dev/null | tail -n 30000 >"$RUNNER_TEMP/capture/unified.log" || true
+          grep -E "Network Process 0 crash|osanalyticshelper|Saved|\.ips" "$RUNNER_TEMP/capture/unified.log" | tail -n 40 || true
+          echo "--- debugger output"
+          cat "$RUNNER_TEMP/capture/lldb.txt" 2>/dev/null | head -n 200 || true
+      - name: Upload capture
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wt-interop-${{ matrix.browser }}-${{ matrix.mode }}-drafts-${{ matrix.drafts || 'all' }}
-          path: ${{ runner.temp }}/wt-interop
+          name: safari-crash-${{ matrix.capture }}
+          path: |
+            ${{ runner.temp }}/capture
+            ${{ runner.temp }}/wt-interop
