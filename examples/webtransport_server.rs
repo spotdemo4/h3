@@ -6,7 +6,7 @@ use h3::{
 };
 use h3_quinn::quinn::{self, crypto::rustls::QuicServerConfig};
 use h3_webtransport::server::{self, WebTransportSession};
-use http::Method;
+use http::{HeaderMap, Method};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use structopt::StructOpt;
@@ -198,7 +198,9 @@ async fn handle_connection(mut conn: Connection<h3_quinn::Connection, Bytes>) ->
                         tracing::info!("Peer wants to initiate a webtransport session");
 
                         tracing::info!("Handing over connection to WebTransport");
-                        let session = WebTransportSession::accept(req, stream, conn).await?;
+                        let session =
+                            WebTransportSession::accept(req, stream, conn, HeaderMap::new())
+                                .await?;
                         tracing::info!(
                             "Established webtransport session using {:?}",
                             session.draft()

@@ -30,6 +30,7 @@ The changes are meant to go upstream. They address [hyperium/h3#347](https://git
 
 - **Draft negotiation.** A server advertises every supported draft and uses the latest one the client also supports. Choose the drafts with `Builder::webtransport_drafts`; `WebTransportSession::draft()` returns the one in use.
 - **Session close and drain.** `WebTransportSession::close(code, reason)`, `drain()`, `closed()` and `draining()` send and receive the `WT_CLOSE_SESSION` and `WT_DRAIN_SESSION` capsules. When a session ends, its streams are reset with `WT_SESSION_GONE`.
+- **Response headers.** `WebTransportSession::accept` takes a `HeaderMap` to add to the response, such as `wt-protocol` to pick one of the protocols the client offered in `wt-available-protocols` ([hyperium/h3#375](https://github.com/hyperium/h3/pull/375)).
 - **Fixes:**
   - `WebTransportSession::accept` waits for the client's SETTINGS instead of failing when the CONNECT request arrives first.
   - A session's ID is its CONNECT stream's ID; it used to be wrong on any stream other than 0.

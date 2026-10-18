@@ -7,7 +7,7 @@ use std::{net::Ipv6Addr, sync::Arc};
 use bytes::{BufMut, Bytes, BytesMut};
 use h3::ext::{Protocol, WebTransportDraft};
 use h3_webtransport::server::WebTransportSession;
-use http::{Method, Request, Response};
+use http::{HeaderMap, Method, Request, Response};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
@@ -16,6 +16,8 @@ pub type ClientStream = h3::client::RequestStream<h3_quinn::BidiStream<Bytes>, B
 
 pub struct Setup {
     pub session: Arc<Session>,
+    /// The CONNECT request as the server received it
+    pub request: Request<()>,
     /// The client's side of the CONNECT stream
     pub stream: ClientStream,
     pub response: Response<()>,
@@ -37,6 +39,25 @@ pub async fn setup_with(
     server_drafts: &[WebTransportDraft],
     client_drafts: &[WebTransportDraft],
     protocol: Protocol,
+) -> Setup {
+    setup_with_headers(
+        server_drafts,
+        client_drafts,
+        protocol,
+        HeaderMap::new(),
+        HeaderMap::new(),
+    )
+    .await
+}
+
+/// Sets up a session, adding `request_headers` to the CONNECT request and `response_headers` to
+/// the server's response
+pub async fn setup_with_headers(
+    server_drafts: &[WebTransportDraft],
+    client_drafts: &[WebTransportDraft],
+    protocol: Protocol,
+    request_headers: HeaderMap,
+    response_headers: HeaderMap,
 ) -> Setup {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
@@ -76,9 +97,10 @@ pub async fn setup_with(
             .resolve_request()
             .await
             .unwrap();
-        WebTransportSession::accept(request, stream, conn)
+        let session = WebTransportSession::accept(request.clone(), stream, conn, response_headers)
             .await
-            .unwrap()
+            .unwrap();
+        (session, request)
     });
 
     let mut roots = rustls::RootCertStore::empty();
@@ -110,12 +132,14 @@ pub async fn setup_with(
         .body(())
         .unwrap();
     request.extensions_mut().insert(protocol);
+    request.headers_mut().extend(request_headers);
     let mut stream = send_request.send_request(request).await.unwrap();
     let response = stream.recv_response().await.unwrap();
-    let session = server.await.unwrap();
+    let (session, request) = server.await.unwrap();
 
     Setup {
         session: Arc::new(session),
+        request,
         stream,
         response,
         _client: client,

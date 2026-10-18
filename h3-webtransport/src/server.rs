@@ -28,7 +28,7 @@ use h3_datagram::{
     datagram_handler::{DatagramReader, DatagramSender, HandleDatagramsExt},
     quic_traits,
 };
-use http::{Method, Request, Response, StatusCode};
+use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 
 use h3::webtransport::SessionId;
 use pin_project_lite::pin_project;
@@ -120,11 +120,17 @@ where
 {
     /// Accepts a *CONNECT* request for establishing a WebTransport session.
     ///
+    /// `headers` are added to the response when the request is accepted, for example
+    /// `wt-protocol` to select one of the protocols the client offered in
+    /// `wt-available-protocols`. They cannot set `sec-webtransport-http3-draft`, which follows
+    /// the negotiated draft.
+    ///
     /// TODO: is the API or the user responsible for validating the CONNECT request?
     pub async fn accept(
         request: Request<()>,
         mut stream: RequestStream<C::BidiStream, B>,
         mut conn: Connection<C, B>,
+        headers: HeaderMap,
     ) -> Result<Self, StreamError> {
         let shared = conn.inner.shared.clone();
 
@@ -198,15 +204,21 @@ where
 
         //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3/#section-3.3
         let response = if validate_wt_connect(&request) {
-            let mut response = Response::builder();
+            let mut response = Response::builder().status(StatusCode::OK).body(()).unwrap();
+            let response_headers = response.headers_mut();
+            response_headers.extend(headers);
+            response_headers.remove("sec-webtransport-http3-draft");
             if draft == WebTransportDraft::Draft02 {
                 //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-02#section-6
                 //# The server SHALL reply with a Sec-
                 //# Webtransport-Http3-Draft header indicating the selected version; its
                 //# value SHALL be draft02 for the version described in this draft.
-                response = response.header("sec-webtransport-http3-draft", "draft02");
+                response_headers.insert(
+                    "sec-webtransport-http3-draft",
+                    HeaderValue::from_static("draft02"),
+                );
             }
-            response.status(StatusCode::OK).body(()).unwrap()
+            response
         } else {
             Response::builder()
                 .status(StatusCode::BAD_REQUEST)
