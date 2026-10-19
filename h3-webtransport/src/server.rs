@@ -618,6 +618,9 @@ where
     B: Buf,
 {
     /// Reads the first frame and classifies the accepted stream.
+    ///
+    /// A request for another WebTransport session is reset with `H3_REQUEST_REJECTED` and
+    /// fails with that code, since a connection carries at most one session.
     pub async fn resolve(mut self) -> Result<AcceptedBi<C, B>, StreamError> {
         let frame = poll_fn(|cx| self.resolver.frame_stream.poll_next(cx)).await;
 
@@ -632,7 +635,21 @@ where
             }
             // Make the underlying HTTP/3 connection handle the rest
             frame => {
-                let (req, resp) = self.resolver.accept_with_frame(frame)?.resolve().await?;
+                let (req, mut resp) = self.resolver.accept_with_frame(frame)?.resolve().await?;
+                if is_webtransport_request(&req) {
+                    //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-16#section-5.1
+                    //# If flow control is not enabled, clients MUST NOT attempt to establish
+                    //# more than one simultaneous WebTransport session.  A server that
+                    //# receives more than one session on an underlying transport connection
+                    //# when flow control is not enabled MUST reset the excessive CONNECT
+                    //# streams with a H3_REQUEST_REJECTED status (see Section 5.2).
+                    resp.stop_sending(Code::H3_REQUEST_REJECTED);
+                    resp.stop_stream(Code::H3_REQUEST_REJECTED);
+                    return Err(StreamError::StreamError {
+                        code: Code::H3_REQUEST_REJECTED,
+                        reason: "the connection already carries a WebTransport session".to_string(),
+                    });
+                }
                 Ok(AcceptedBi::Request(req, resp))
             }
         }
@@ -775,7 +792,8 @@ pub enum AcceptedBi<C: quic::Connection<B>, B: Buf> {
     BidiStream(SessionId, BidiStream<C::BidiStream, B>),
     /// An incoming HTTP/3 request, passed through a webtransport session.
     ///
-    /// This makes it possible to respond to multiple CONNECT requests
+    /// Never a request for another WebTransport session, which
+    /// [`BiStreamResolver::resolve`] rejects.
     Request(Request<()>, RequestStream<C::BidiStream, B>),
 }
 

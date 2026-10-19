@@ -4,9 +4,12 @@ mod common;
 
 use std::time::Duration;
 
-use common::{client_h3, endpoints, server_h3};
-use h3::ext::{Protocol, WebTransportDraft};
-use h3_webtransport::server::{is_webtransport_request, Accepted, WebTransportSession};
+use common::{client_h3, endpoints, server_h3, setup};
+use h3::{
+    error::{Code, StreamError},
+    ext::{Protocol, WebTransportDraft},
+};
+use h3_webtransport::server::{is_webtransport_request, Accepted, AcceptedBi, WebTransportSession};
 use http::{HeaderMap, Method, Request, Response, StatusCode};
 use tokio::time::timeout;
 
@@ -104,4 +107,44 @@ async fn not_webtransport_is_handed_back() {
     }
 
     let _session = timeout(TIMEOUT, server).await.unwrap().unwrap();
+}
+
+/// A connection carries one session, so a request for another one is rejected, while other
+/// requests still reach the application.
+#[tokio::test]
+async fn second_session_is_rejected() {
+    let mut setup = setup().await;
+
+    let mut second = setup
+        .send_request
+        .send_request(request(Method::CONNECT, Some(Protocol::WEB_TRANSPORT)))
+        .await
+        .unwrap();
+    let resolver = setup.session.accept_bi().await.unwrap().unwrap();
+    let rejected = timeout(TIMEOUT, resolver.resolve()).await.unwrap();
+    assert!(
+        matches!(
+            rejected,
+            Err(StreamError::StreamError { code, .. }) if code == Code::H3_REQUEST_REJECTED
+        ),
+        "{:?}",
+        rejected.err()
+    );
+    let response = timeout(TIMEOUT, second.recv_response()).await.unwrap();
+    assert!(
+        matches!(
+            response,
+            Err(StreamError::RemoteTerminate { code }) if code == Code::H3_REQUEST_REJECTED
+        ),
+        "{response:?}"
+    );
+
+    let _other = setup
+        .send_request
+        .send_request(request(Method::GET, None))
+        .await
+        .unwrap();
+    let resolver = setup.session.accept_bi().await.unwrap().unwrap();
+    let accepted = timeout(TIMEOUT, resolver.resolve()).await.unwrap().unwrap();
+    assert!(matches!(accepted, AcceptedBi::Request(request, _) if request.method() == Method::GET));
 }

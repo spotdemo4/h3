@@ -91,8 +91,8 @@ impl Builder {
     ///
     ///
     /// **Server**:
-    /// Supporting for webtransport also requires setting `enable_extended_connect` `enable_datagram`
-    /// and `max_webtransport_sessions`.
+    /// Supporting for webtransport also requires setting `enable_extended_connect` and
+    /// `enable_datagram`.
     #[inline]
     pub fn enable_webtransport(&mut self, value: bool) -> &mut Self {
         self.config.settings.enable_webtransport = value;
@@ -117,9 +117,15 @@ impl Builder {
         self
     }
 
-    /// Limits the maximum number of WebTransport sessions
-    pub fn max_webtransport_sessions(&mut self, value: u64) -> &mut Self {
-        self.config.settings.max_webtransport_sessions = value;
+    /// Has no effect: a connection carries at most one WebTransport session.
+    ///
+    /// Without WebTransport flow control, which is not implemented, draft-ietf-webtrans-http3
+    /// allows a single session per connection. The server always advertises a limit of 1, and
+    /// `h3-webtransport` rejects any further session with `H3_REQUEST_REJECTED`.
+    #[deprecated(
+        note = "a connection carries at most one WebTransport session, which is always advertised"
+    )]
+    pub fn max_webtransport_sessions(&mut self, _value: u64) -> &mut Self {
         self
     }
 

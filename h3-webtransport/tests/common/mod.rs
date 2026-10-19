@@ -23,9 +23,10 @@ pub struct Setup {
     pub response: Response<()>,
     /// The client's QUIC connection, to open WebTransport streams
     pub conn: quinn::Connection,
+    /// The client's HTTP/3 connection, to send more requests
+    pub send_request: h3::client::SendRequest<h3_quinn::OpenStreams, Bytes>,
     // Keep the client alive
     _client: quinn::Endpoint,
-    _send_request: h3::client::SendRequest<h3_quinn::OpenStreams, Bytes>,
 }
 
 pub async fn setup() -> Setup {
@@ -108,7 +109,7 @@ pub async fn setup_with_headers(
         response,
         conn: quic_conn,
         _client: client,
-        _send_request: send_request,
+        send_request,
     }
 }
 
@@ -156,7 +157,6 @@ pub async fn server_h3(
         .enable_webtransport(true)
         .enable_extended_connect(true)
         .enable_datagram(true)
-        .max_webtransport_sessions(1)
         .webtransport_drafts(drafts)
         .build(h3_quinn::Connection::new(conn))
         .await

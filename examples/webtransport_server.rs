@@ -132,7 +132,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .enable_webtransport(true)
                         .enable_extended_connect(true)
                         .enable_datagram(true)
-                        .max_webtransport_sessions(1)
                         .webtransport_drafts(drafts)
                         .send_grease(true)
                         .build(h3_quinn::Connection::new(conn))

@@ -42,8 +42,6 @@ pub struct Settings {
     pub(crate) enable_extended_connect: bool,
     /// Enable HTTP Datagrams, see https://datatracker.ietf.org/doc/rfc9297/ for details
     pub(crate) enable_datagram: bool,
-    /// The maximum number of concurrent streams that can be opened by the peer.
-    pub(crate) max_webtransport_sessions: u64,
     /// The WebTransport drafts advertised when `enable_webtransport` is set, or the drafts the peer
     /// advertised.
     pub(crate) webtransport_drafts: WebTransportDrafts,
@@ -125,11 +123,6 @@ impl From<&frame::Settings> for Settings {
                 .unwrap_or(defaults.max_field_section_size),
             enable_webtransport: !webtransport_drafts.is_empty(),
             webtransport_drafts,
-            max_webtransport_sessions: settings
-                .get(frame::SettingId::WEBTRANSPORT_MAX_SESSIONS)
-                .or_else(|| settings.get(frame::SettingId::WEBTRANSPORT_MAX_SESSIONS_DRAFT07))
-                .or_else(|| settings.get(frame::SettingId::WT_MAX_SESSIONS))
-                .unwrap_or(defaults.max_webtransport_sessions),
             enable_datagram: settings
                 .get(frame::SettingId::H3_DATAGRAM)
                 .map(|value| value != 0)
@@ -157,7 +150,6 @@ impl TryFrom<Config> for frame::Settings {
                     enable_webtransport,
                     enable_extended_connect,
                     enable_datagram,
-                    max_webtransport_sessions,
                     webtransport_drafts,
                 },
         } = value;
@@ -197,20 +189,18 @@ impl TryFrom<Config> for frame::Settings {
         settings.insert(frame::SettingId::H3_DATAGRAM, enable_datagram as u64)?;
 
         if enable_webtransport {
+            // A connection carries at most one session: draft 16 allows no more without
+            // WebTransport flow control, which is not implemented, and h3-webtransport rejects
+            // any other CONNECT request for a session with H3_REQUEST_REJECTED.
             for draft in webtransport_drafts.iter() {
                 match draft {
                     WebTransportDraft::Draft02 => {
                         settings.insert(frame::SettingId::ENABLE_WEBTRANSPORT, 1)?;
-                        settings.insert(
-                            frame::SettingId::WEBTRANSPORT_MAX_SESSIONS,
-                            max_webtransport_sessions,
-                        )?;
+                        settings.insert(frame::SettingId::WEBTRANSPORT_MAX_SESSIONS, 1)?;
                     }
-                    // A value of 0 would mean WebTransport is not supported.
-                    WebTransportDraft::Draft07 => settings.insert(
-                        frame::SettingId::WEBTRANSPORT_MAX_SESSIONS_DRAFT07,
-                        max_webtransport_sessions.max(1),
-                    )?,
+                    WebTransportDraft::Draft07 => {
+                        settings.insert(frame::SettingId::WEBTRANSPORT_MAX_SESSIONS_DRAFT07, 1)?
+                    }
                     // Draft 14 enables flow control when both endpoints send a value greater
                     // than "1" here (or a nonzero SETTINGS_WT_INITIAL_MAX_* setting). WebTransport
                     // flow control is not implemented, so this is always 1.
@@ -237,7 +227,6 @@ impl Default for Settings {
             enable_webtransport: false,
             enable_extended_connect: false,
             enable_datagram: false,
-            max_webtransport_sessions: 0,
             webtransport_drafts: WebTransportDrafts::ALL,
         }
     }
@@ -324,6 +313,10 @@ mod tests {
             WebTransportDraft::ALL
         );
         assert_eq!(frame.get(frame::SettingId::ENABLE_WEBTRANSPORT), Some(1));
+        assert_eq!(
+            frame.get(frame::SettingId::WEBTRANSPORT_MAX_SESSIONS),
+            Some(1)
+        );
         assert_eq!(
             frame.get(frame::SettingId::WEBTRANSPORT_MAX_SESSIONS_DRAFT07),
             Some(1)

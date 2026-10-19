@@ -749,8 +749,7 @@ mod tests {
             .enable_extended_connect(true)
             .enable_datagram(true)
             .enable_webtransport(true)
-            .webtransport_drafts(WebTransportDraft::ALL)
-            .max_webtransport_sessions(VarInt::MAX.0);
+            .webtransport_drafts(WebTransportDraft::ALL);
         let config: Config = builder.config;
         let settings = Settings::try_from(config).unwrap();
 
