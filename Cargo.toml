@@ -9,3 +9,17 @@ members = [
     "examples",
 ]
 resolver = "2"
+
+# The fork is published to crates.io as trev-h3, trev-h3-quinn, trev-h3-webtransport and
+# trev-h3-datagram, all with the same version. The library names stay h3, h3_quinn, ... so code
+# keeps using `h3::...`. Pushing a `v<version>` tag publishes them; see
+# .github/workflows/publish.yml.
+[workspace.package]
+version = "0.1.0"
+repository = "https://github.com/spotdemo4/h3"
+
+[workspace.dependencies]
+h3 = { package = "trev-h3", version = "0.1.0", path = "h3" }
+h3-datagram = { package = "trev-h3-datagram", version = "0.1.0", path = "h3-datagram" }
+h3-quinn = { package = "trev-h3-quinn", version = "0.1.0", path = "h3-quinn" }
+h3-webtransport = { package = "trev-h3-webtransport", version = "0.1.0", path = "h3-webtransport" }

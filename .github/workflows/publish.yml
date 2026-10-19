@@ -1,0 +1,85 @@
+name: Publish
+
+# Publishes trev-h3, trev-h3-datagram, trev-h3-quinn and trev-h3-webtransport to crates.io when a
+# `v<version>` tag is pushed. All four crates share the version in the workspace Cargo.toml.
+#
+# Release with:
+#   1. Bump `version` in [workspace.package] and [workspace.dependencies] in Cargo.toml.
+#   2. Push the commit to master.
+#   3. git tag v<version> && git push origin v<version>
+#
+# Needs a crates.io API token with the publish-new and publish-update scopes in the
+# CARGO_REGISTRY_TOKEN repository secret.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    # Forks of the fork would publish under the same crate names
+    if: github.repository == 'spotdemo4/h3'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          # The default, -D warnings, would fail packaging on warnings that CI allows
+          rustflags: ""
+
+      - name: Check the tag matches the crate version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "trev-h3") | .version')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the crate version $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # Only publish a commit that was pushed to master and passed CI there
+      - name: Wait for CI on master
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 20); do
+            run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI.yml --branch master \
+              --event push --commit "$GITHUB_SHA" --json databaseId --jq '.[0].databaseId')
+            [ -n "$run" ] && break
+            sleep 15
+          done
+          if [ -z "$run" ]; then
+            echo "::error::CI has not run on $GITHUB_SHA. Push the commit to master before tagging it."
+            exit 1
+          fi
+          gh run watch "$run" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30 > /dev/null \
+            || { echo "::error::CI failed on $GITHUB_SHA"; exit 1; }
+
+      # One crate at a time in dependency order, skipping versions that are already on crates.io,
+      # so that the workflow can be re-run after a partial failure
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          for crate in trev-h3 trev-h3-datagram trev-h3-quinn trev-h3-webtransport; do
+            status=$(curl -s -o /dev/null -w '%{http_code}' \
+              -A "spotdemo4/h3 publish workflow (https://github.com/spotdemo4/h3)" \
+              "https://crates.io/api/v1/crates/$crate/$VERSION")
+            if [ "$status" = 200 ]; then
+              echo "$crate $VERSION is already published"
+              continue
+            fi
+            cargo publish -p "$crate"
+          done

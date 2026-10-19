@@ -71,7 +71,7 @@ where
 ///
 /// Maintains the session using the underlying HTTP/3 connection.
 ///
-/// Similar to [`h3::server::Connection`](https://docs.rs/h3/latest/h3/server/struct.Connection.html) it is generic over the QUIC implementation and Buffer.
+/// Similar to [`h3::server::Connection`](https://docs.rs/trev-h3/latest/h3/server/struct.Connection.html) it is generic over the QUIC implementation and Buffer.
 pub struct WebTransportSession<C, B>
 where
     C: quic::Connection<B> + quic_traits::DatagramConnectionExt<B>,

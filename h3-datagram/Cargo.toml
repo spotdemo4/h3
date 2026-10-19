@@ -1,18 +1,19 @@
 [package]
-name = "h3-datagram"
-version = "0.0.2"
+name = "trev-h3-datagram"
+version.workspace = true
 edition = "2021"
-documentation = "https://docs.rs/h3-datagram"
-repository = "https://github.com/hyperium/h3"
+documentation = "https://docs.rs/trev-h3-datagram"
+repository.workspace = true
 readme = "readme.md"
-description = "rfc9297 extension for the h3 crate"
+description = "rfc9297 extension for the h3 crate. Fork of h3-datagram for trev-h3."
 keywords = ["http3", "quic", "rfc9297"]
 categories = ["network-programming", "web-programming"]
 license = "MIT"
 
+[lib]
+name = "h3_datagram"
 
 [dependencies]
-#h3 = { path = "../h3" }
 bytes = "1.4"
 tracing = { version = "0.1.40", optional = true }
 
@@ -20,6 +21,5 @@ tracing = { version = "0.1.40", optional = true }
 tracing = ["dep:tracing"]
 
 [dependencies.h3]
-version = "0.0.8"
-path = "../h3"
+workspace = true
 features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes"]

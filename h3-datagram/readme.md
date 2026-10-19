@@ -1,5 +1,7 @@
 # H3 Datagram
 
+This is `h3-datagram` from the [spotdemo4/h3](https://github.com/spotdemo4/h3) fork, published as `trev-h3-datagram` for use with [`trev-h3`](https://crates.io/crates/trev-h3). The library is still named `h3_datagram`.
+
 this crate provides an implementation of the [h3-datagram](https://datatracker.ietf.org/doc/html/rfc9297) spec that works with the h3 crate.
 
 # Status

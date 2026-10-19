@@ -1,16 +1,17 @@
 [package]
-name = "h3-webtransport"
-version = "0.1.2"
+name = "trev-h3-webtransport"
+version.workspace = true
 edition = "2021"
-documentation = "https://docs.rs/h3-webtransport"
-repository = "https://github.com/hyperium/h3"
+documentation = "https://docs.rs/trev-h3-webtransport"
+repository.workspace = true
 readme = "readme.md"
-description = "webtransport extension for h3"
+description = "webtransport extension for h3. Fork of h3-webtransport for trev-h3."
 keywords = ["http3", "quic", "webtransport"]
 categories = ["network-programming", "web-programming"]
 license = "MIT"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "h3_webtransport"
 
 [dependencies]
 bytes = "1"
@@ -19,15 +20,14 @@ http = "1"
 pin-project-lite = { version = "0.2", default-features = false }
 tracing = "0.1.37"
 tokio = { version = "1.28", default-features = false }
-h3-datagram = { version = "0.0.2", path = "../h3-datagram" }
+h3-datagram = { workspace = true }
 
 [dependencies.h3]
-version = "0.0.8"
-path = "../h3"
+workspace = true
 features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes"]
 
 [dev-dependencies]
-h3-quinn = { path = "../h3-quinn", features = ["datagram"] }
+h3-quinn = { package = "trev-h3-quinn", path = "../h3-quinn", features = ["datagram"] }
 quinn = { version = "0.11", default-features = false, features = [
     "runtime-tokio",
     "rustls",

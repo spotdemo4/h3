@@ -1,11 +1,13 @@
 # h3-quinn
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../LICENSE)
-[![CI](https://github.com/hyperium/h3/workflows/CI/badge.svg)](https://github.com/hyperium/h3/actions?query=workflow%3ACI)
-[![Crates.io](https://img.shields.io/crates/v/h3-quinn.svg)](https://crates.io/crates/h3-quinn)
-[![Documentation](https://docs.rs/h3-quinn/badge.svg)](https://docs.rs/h3-quinn)
+[![CI](https://github.com/spotdemo4/h3/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/spotdemo4/h3/actions/workflows/CI.yml)
+[![Crates.io](https://img.shields.io/crates/v/trev-h3-quinn.svg)](https://crates.io/crates/trev-h3-quinn)
+[![Documentation](https://docs.rs/trev-h3-quinn/badge.svg)](https://docs.rs/trev-h3-quinn)
 
 QUIC transport implementation for [h3](https://github.com/hyperium/h3) based on [Quinn](https://github.com/quinn-rs/quinn).
+
+This is `h3-quinn` from the [spotdemo4/h3](https://github.com/spotdemo4/h3) fork, published as `trev-h3-quinn` for use with [`trev-h3`](https://crates.io/crates/trev-h3). The library is still named `h3_quinn`.
 
 ## Overview
 

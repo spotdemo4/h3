@@ -1,6 +1,6 @@
 [package]
-name = "h3"
-version = "0.0.8"
+name = "trev-h3"
+version.workspace = true
 rust-version = "1.74.1"
 authors = [
     "Sean McArthur <sean@seanmonstar.com>",
@@ -8,16 +8,19 @@ authors = [
 ]
 license = "MIT"
 edition = "2021"
-documentation = "https://docs.rs/h3"
-repository = "https://github.com/hyperium/h3"
+documentation = "https://docs.rs/trev-h3"
+repository.workspace = true
 readme = "../README.md"
-description = "An async HTTP/3 implementation."
+description = "An async HTTP/3 implementation. Fork of h3 with WebTransport fixes."
 keywords = ["http3", "quic", "h3"]
 categories = [
     "network-programming",
     "web-programming::http-client",
     "web-programming::http-server",
 ]
+
+[lib]
+name = "h3"
 
 [features]
 i-implement-a-third-party-backend-and-opt-into-breaking-changes = []
@@ -54,4 +57,5 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 futures = { version = "0.3.28" }
 tokio-util = { version = "0.7.9" }
-h3-datagram = {path = "../h3-datagram" }
+# Without a version, so that publishing leaves out this dependency cycle
+h3-datagram = { package = "trev-h3-datagram", path = "../h3-datagram" }

@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/spotdemo4/h3/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/spotdemo4/h3/actions/workflows/CI.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![trev-h3](https://img.shields.io/crates/v/trev-h3.svg?label=trev-h3)](https://crates.io/crates/trev-h3)
+[![trev-h3-quinn](https://img.shields.io/crates/v/trev-h3-quinn.svg?label=trev-h3-quinn)](https://crates.io/crates/trev-h3-quinn)
+[![trev-h3-webtransport](https://img.shields.io/crates/v/trev-h3-webtransport.svg?label=trev-h3-webtransport)](https://crates.io/crates/trev-h3-webtransport)
 
 [![Chrome](https://img.shields.io/github/check-runs/spotdemo4/h3/master?nameFilter=Chrome&label=Chrome&logo=googlechrome)](https://github.com/spotdemo4/h3/actions/workflows/webtransport-interop.yml)
 [![Firefox](https://img.shields.io/github/check-runs/spotdemo4/h3/master?nameFilter=Firefox&label=Firefox&logo=firefoxbrowser)](https://github.com/spotdemo4/h3/actions/workflows/webtransport-interop.yml)
@@ -66,12 +69,16 @@ Safari 26 offers drafts 07 and 13 but only connects if the server advertises dra
 
 ## Using the fork
 
+The fork is published to crates.io as [`trev-h3`](https://crates.io/crates/trev-h3), [`trev-h3-quinn`](https://crates.io/crates/trev-h3-quinn), [`trev-h3-webtransport`](https://crates.io/crates/trev-h3-webtransport) and [`trev-h3-datagram`](https://crates.io/crates/trev-h3-datagram). Their library names are unchanged, so code keeps using `h3::`, `h3_quinn::` and so on, and renaming the dependencies keeps feature names like `h3/tracing` working too:
+
 ```toml
 [dependencies]
-h3 = { git = "https://github.com/spotdemo4/h3" }
-h3-quinn = { git = "https://github.com/spotdemo4/h3", features = ["datagram"] }
-h3-webtransport = { git = "https://github.com/spotdemo4/h3" }
+h3 = { package = "trev-h3", version = "0.1" }
+h3-quinn = { package = "trev-h3-quinn", version = "0.1", features = ["datagram"] }
+h3-webtransport = { package = "trev-h3-webtransport", version = "0.1" }
 ```
+
+All four crates share one version, and h3's API is still 0.x, so a minor version can break the API. To use the latest `master` instead, replace `version = "0.1"` with `git = "https://github.com/spotdemo4/h3"`.
 
 See [`examples/webtransport_server.rs`](examples/webtransport_server.rs) for a complete server.
 
