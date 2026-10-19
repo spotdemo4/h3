@@ -78,12 +78,12 @@ The fork is published to crates.io as [`trev-h3`](https://crates.io/crates/trev-
 
 ```toml
 [dependencies]
-h3 = { package = "trev-h3", version = "0.1" }
-h3-quinn = { package = "trev-h3-quinn", version = "0.1", features = ["datagram"] }
-h3-webtransport = { package = "trev-h3-webtransport", version = "0.1" }
+h3 = { package = "trev-h3", version = "0.2" }
+h3-quinn = { package = "trev-h3-quinn", version = "0.2", features = ["datagram"] }
+h3-webtransport = { package = "trev-h3-webtransport", version = "0.2" }
 ```
 
-All four crates share one version, and h3's API is still 0.x, so a minor version can break the API. To use the latest `master` instead, replace `version = "0.1"` with `git = "https://github.com/spotdemo4/h3"`.
+All four crates share one version, and h3's API is still 0.x, so a minor version can break the API. To use the latest `master` instead, replace `version = "0.2"` with `git = "https://github.com/spotdemo4/h3"`.
 
 See [`examples/webtransport_server.rs`](examples/webtransport_server.rs) for a complete server.
 
