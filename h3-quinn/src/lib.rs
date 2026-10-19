@@ -320,6 +320,13 @@ impl<B: Buf> quic::RecvStream for BidiStream<B> {
         self.recv.stop_sending(error_code)
     }
 
+    fn poll_received_reset(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
+        self.recv.poll_received_reset(cx)
+    }
+
     fn recv_id(&self) -> StreamId {
         self.recv.recv_id()
     }
@@ -385,6 +392,9 @@ pub struct RecvStream {
     stream: quinn::RecvStream,
     id: StreamId,
     is_0rtt: bool,
+    // The code of a reset seen by `poll_received_reset`. Quinn frees the stream once it reports
+    // the reset there, so reads would no longer see it.
+    reset: Option<VarInt>,
 }
 
 impl RecvStream {
@@ -397,6 +407,7 @@ impl RecvStream {
             stream,
             id,
             is_0rtt,
+            reset: None,
         }
     }
 }
@@ -409,6 +420,11 @@ impl quic::RecvStream for RecvStream {
         &mut self,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<Option<Self::Buf>, StreamErrorIncoming>> {
+        if let Some(code) = self.reset {
+            return Poll::Ready(Err(convert_read_error_to_stream_error(ReadError::Reset(
+                code,
+            ))));
+        }
         // `read_chunk` is cancel-safe, so a fresh future can be polled on every call. This keeps
         // the stream in place between reads, so `stop_sending` can stop it at any time.
         let chunk = ready!(pin!(self.stream.read_chunk(usize::MAX, true)).poll(cx));
@@ -422,6 +438,21 @@ impl quic::RecvStream for RecvStream {
         let _ = self
             .stream
             .stop(VarInt::from_u64(error_code).expect("invalid error_code"));
+    }
+
+    #[cfg_attr(feature = "tracing", instrument(skip_all, level = "trace"))]
+    fn poll_received_reset(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
+        if let Some(code) = self.reset {
+            return Poll::Ready(Ok(Some(code.into_inner())));
+        }
+        // Like `read_chunk`, `received_reset` is cancel-safe.
+        let result = ready!(pin!(self.stream.received_reset()).poll(cx))
+            .map_err(convert_reset_error_to_stream_error)?;
+        self.reset = result;
+        Poll::Ready(Ok(result.map(VarInt::into_inner)))
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, level = "trace"))]
@@ -469,6 +500,17 @@ fn convert_write_error_to_stream_error(error: quinn::WriteError) -> StreamErrorI
         error @ quinn::WriteError::ClosedStream | error @ quinn::WriteError::ZeroRttRejected => {
             StreamErrorIncoming::Unknown(Box::new(error))
         }
+    }
+}
+
+fn convert_reset_error_to_stream_error(error: quinn::ResetError) -> StreamErrorIncoming {
+    match error {
+        quinn::ResetError::ConnectionLost(connection_error) => {
+            StreamErrorIncoming::ConnectionErrorIncoming {
+                connection_error: convert_connection_error(connection_error),
+            }
+        }
+        error @ quinn::ResetError::ZeroRttRejected => StreamErrorIncoming::Unknown(Box::new(error)),
     }
 }
 

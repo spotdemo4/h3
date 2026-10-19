@@ -1900,3 +1900,209 @@ async fn client_stopped_by_server() {
 
     tokio::join!(server_fut, client_fut);
 }
+
+/// A server that pauses reading the request body learns from `received_reset` that the client
+/// reset it, without reading.
+#[tokio::test]
+async fn server_received_reset_by_client() {
+    init_tracing();
+    let mut pair = Pair::default();
+    let mut server = pair.server();
+    let (reset_tx, reset_rx) = futures::channel::oneshot::channel::<()>();
+    let (done_tx, done_rx) = futures::channel::oneshot::channel::<()>();
+
+    let client_fut = async {
+        let (mut driver, mut client) = client::new(pair.client().await).await.expect("client init");
+        let drive_fut = async { future::poll_fn(|cx| driver.poll_close(cx)).await };
+        let req_fut = async move {
+            let mut request_stream = client
+                .send_request(Request::post("http://localhost/salut").body(()).unwrap())
+                .await
+                .expect("request");
+            request_stream
+                .send_data(Bytes::from_static(b"first"))
+                .await
+                .expect("send_data");
+
+            reset_rx.await.expect("reset signal");
+            request_stream.stop_stream(Code::H3_REQUEST_CANCELLED);
+            done_rx.await.expect("done signal");
+        };
+        tokio::join!(req_fut, drive_fut)
+    };
+
+    let server_fut = async {
+        let conn = server.next().await;
+        let mut incoming_req = server::Connection::new(conn).await.unwrap();
+
+        let (_request, mut request_stream) = get_stream_blocking(&mut incoming_req)
+            .await
+            .expect("accept");
+        let data = request_stream
+            .recv_data()
+            .await
+            .expect("recv data")
+            .expect("first chunk");
+        assert_eq!(data.chunk(), b"first");
+        future::poll_fn(|cx| {
+            assert!(request_stream.poll_received_reset(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+
+        reset_tx.send(()).unwrap();
+        assert_matches!(
+            request_stream.received_reset().await,
+            Ok(Some(code)) if code == Code::H3_REQUEST_CANCELLED
+        );
+        // The reset is still reported once observed, and reading fails with it.
+        assert_matches!(
+            request_stream.received_reset().await,
+            Ok(Some(code)) if code == Code::H3_REQUEST_CANCELLED
+        );
+        assert_matches!(
+            request_stream.recv_data().await.map(|_| ()),
+            Err(StreamError::RemoteTerminate { code, .. }) if code == Code::H3_REQUEST_CANCELLED
+        );
+        done_tx.send(()).unwrap();
+
+        assert_matches!(
+            incoming_req.accept().await.err().unwrap(),
+            ConnectionError::Remote(ConnectionErrorIncoming::ApplicationClose{error_code: code, ..})
+            if code == Code::H3_NO_ERROR.value()
+        );
+    };
+
+    tokio::join!(server_fut, client_fut);
+}
+
+/// `received_reset` resolves without a code once the request body was read to the end, or
+/// reading was stopped, since the client can no longer reset it.
+#[tokio::test]
+async fn server_received_reset_after_end() {
+    init_tracing();
+    let mut pair = Pair::default();
+    let mut server = pair.server();
+    let (done_tx, done_rx) = futures::channel::oneshot::channel::<()>();
+
+    let client_fut = async {
+        let (mut driver, mut client) = client::new(pair.client().await).await.expect("client init");
+        let drive_fut = async { future::poll_fn(|cx| driver.poll_close(cx)).await };
+        let req_fut = async move {
+            let mut finished = client
+                .send_request(Request::post("http://localhost/salut").body(()).unwrap())
+                .await
+                .expect("request");
+            finished
+                .send_data(Bytes::from_static(b"body"))
+                .await
+                .expect("send_data");
+            finished.finish().await.expect("finish");
+
+            let _stopped = client
+                .send_request(Request::post("http://localhost/salut").body(()).unwrap())
+                .await
+                .expect("request");
+            done_rx.await.expect("done signal");
+        };
+        tokio::join!(req_fut, drive_fut)
+    };
+
+    let server_fut = async {
+        let conn = server.next().await;
+        let mut incoming_req = server::Connection::new(conn).await.unwrap();
+
+        let (_request, mut finished) = get_stream_blocking(&mut incoming_req)
+            .await
+            .expect("accept");
+        while finished.recv_data().await.expect("recv data").is_some() {}
+        assert_matches!(finished.received_reset().await, Ok(None));
+
+        let (_request, mut stopped) = get_stream_blocking(&mut incoming_req)
+            .await
+            .expect("accept");
+        stopped.stop_sending(Code::H3_NO_ERROR);
+        assert_matches!(stopped.received_reset().await, Ok(None));
+        done_tx.send(()).unwrap();
+
+        assert_matches!(
+            incoming_req.accept().await.err().unwrap(),
+            ConnectionError::Remote(ConnectionErrorIncoming::ApplicationClose{error_code: code, ..})
+            if code == Code::H3_NO_ERROR.value()
+        );
+    };
+
+    tokio::join!(server_fut, client_fut);
+}
+
+/// A client learns from `received_reset` that the server reset the response, without reading.
+#[tokio::test]
+async fn client_received_reset_by_server() {
+    init_tracing();
+    let mut pair = Pair::default();
+    let mut server = pair.server();
+    let (reset_tx, reset_rx) = futures::channel::oneshot::channel::<()>();
+    let (done_tx, done_rx) = futures::channel::oneshot::channel::<()>();
+
+    let client_fut = async {
+        let (mut driver, mut client) = client::new(pair.client().await).await.expect("client init");
+        let drive_fut = async { future::poll_fn(|cx| driver.poll_close(cx)).await };
+        let req_fut = async move {
+            let mut request_stream = client
+                .send_request(Request::get("http://localhost/salut").body(()).unwrap())
+                .await
+                .expect("request");
+            request_stream.finish().await.expect("finish");
+
+            let response = request_stream.recv_response().await.expect("recv response");
+            assert_eq!(response.status(), StatusCode::OK);
+            future::poll_fn(|cx| {
+                assert!(request_stream.poll_received_reset(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+
+            reset_tx.send(()).unwrap();
+            assert_matches!(
+                request_stream.received_reset().await,
+                Ok(Some(code)) if code == Code::H3_INTERNAL_ERROR
+            );
+            assert_matches!(
+                request_stream.recv_data().await.map(|_| ()),
+                Err(StreamError::RemoteTerminate { code, .. }) if code == Code::H3_INTERNAL_ERROR
+            );
+            done_tx.send(()).unwrap();
+        };
+        tokio::join!(req_fut, drive_fut)
+    };
+
+    let server_fut = async {
+        let conn = server.next().await;
+        let mut incoming_req = server::Connection::new(conn).await.unwrap();
+
+        let (_request, mut request_stream) = get_stream_blocking(&mut incoming_req)
+            .await
+            .expect("accept");
+        request_stream
+            .send_response(
+                Response::builder()
+                    .status(200)
+                    .body(())
+                    .expect("build response"),
+            )
+            .await
+            .expect("send_response");
+
+        reset_rx.await.expect("reset signal");
+        request_stream.stop_stream(Code::H3_INTERNAL_ERROR);
+        done_rx.await.expect("done signal");
+
+        assert_matches!(
+            incoming_req.accept().await.err().unwrap(),
+            ConnectionError::Remote(ConnectionErrorIncoming::ApplicationClose{error_code: code, ..})
+            if code == Code::H3_NO_ERROR.value()
+        );
+    };
+
+    tokio::join!(server_fut, client_fut);
+}

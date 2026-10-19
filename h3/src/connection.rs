@@ -1043,6 +1043,19 @@ where
     pub fn stop_sending(&mut self, err_code: Code) {
         self.stream.stop_sending(err_code);
     }
+
+    /// Poll for the peer resetting the receiving side of the stream
+    #[cfg_attr(feature = "tracing", instrument(skip_all, level = "trace"))]
+    pub fn poll_received_reset(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<Code>, StreamError>> {
+        self.stream.poll_received_reset(cx).map(|result| {
+            result
+                .map(|code| code.map(Code::from))
+                .map_err(|e| self.handle_quic_stream_error(e))
+        })
+    }
 }
 
 impl<S, B> RequestStream<S, B>

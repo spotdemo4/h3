@@ -236,6 +236,31 @@ where
         self.inner.stream.stop_sending(error_code)
     }
 
+    /// Waits for the peer to reset the response with `RESET_STREAM`.
+    ///
+    /// This does not read the response, so it can be polled while the application is not ready
+    /// for more of it, to cancel the work for this request as soon as the server abandons it.
+    ///
+    /// Returns `Ok(Some(code))` with the error code of the peer's `RESET_STREAM`, or `Ok(None)`
+    /// once the response can no longer be reset, after it was read to the end or after
+    /// [`RequestStream::stop_sending`].
+    ///
+    /// After a reset, receiving the rest of the response fails with
+    /// [`StreamError::RemoteTerminate`].
+    pub async fn received_reset(&mut self) -> Result<Option<Code>, StreamError> {
+        future::poll_fn(|cx| self.poll_received_reset(cx)).await
+    }
+
+    /// Polls for the peer resetting the response with `RESET_STREAM`.
+    ///
+    /// See [`RequestStream::received_reset`].
+    pub fn poll_received_reset(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<Code>, StreamError>> {
+        self.inner.poll_received_reset(cx)
+    }
+
     /// Returns the underlying stream id
     pub fn id(&self) -> StreamId {
         self.inner.stream.id()

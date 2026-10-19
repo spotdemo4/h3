@@ -131,12 +131,19 @@ impl<S, B> RecvStream<S, B> {
     }
 }
 
-impl<S: quic::RecvStream, B> RecvStream<S, B> {
+impl<S: quic::RecvStream, B: Buf> RecvStream<S, B> {
     pub(crate) fn with_session(stream: BufRecvStream<S, B>, session: Arc<SessionState>) -> Self {
         Self {
             stream,
             guard: SessionGuard::new(Some(session), stop_sending),
         }
+    }
+
+    /// Waits for the peer to reset this stream with `RESET_STREAM`.
+    ///
+    /// See [`quic::RecvStream::poll_received_reset`].
+    pub async fn received_reset(&mut self) -> Result<Option<u64>, StreamErrorIncoming> {
+        poll_fn(|cx| quic::RecvStream::poll_received_reset(self, cx)).await
     }
 }
 
@@ -163,6 +170,16 @@ where
 
     fn stop_sending(&mut self, error_code: u64) {
         self.stream.stop_sending(error_code)
+    }
+
+    fn poll_received_reset(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
+        self.guard
+            .poll(&mut self.stream, cx, session_gone, |s, cx| {
+                s.poll_received_reset(cx)
+            })
     }
 
     fn recv_id(&self) -> quic::StreamId {
@@ -402,6 +419,13 @@ impl<S: quic::SendStream<B> + quic::RecvStream, B: Buf> BidiStream<S, B> {
     pub async fn stopped(&mut self) -> Result<Option<u64>, StreamErrorIncoming> {
         poll_fn(|cx| quic::SendStream::poll_stopped(self, cx)).await
     }
+
+    /// Waits for the peer to reset the receive side of this stream with `RESET_STREAM`.
+    ///
+    /// See [`quic::RecvStream::poll_received_reset`].
+    pub async fn received_reset(&mut self) -> Result<Option<u64>, StreamErrorIncoming> {
+        poll_fn(|cx| quic::RecvStream::poll_received_reset(self, cx)).await
+    }
 }
 
 impl<S, B> Drop for BidiStream<S, B> {
@@ -486,6 +510,14 @@ impl<S: quic::RecvStream, B> quic::RecvStream for BidiStream<S, B> {
 
     fn stop_sending(&mut self, error_code: u64) {
         self.parts().0.stop_sending(error_code)
+    }
+
+    fn poll_received_reset(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
+        let (stream, guard) = self.parts();
+        guard.poll(stream, cx, session_gone, |s, cx| s.poll_received_reset(cx))
     }
 
     fn recv_id(&self) -> quic::StreamId {

@@ -244,6 +244,24 @@ pub trait RecvStream {
     /// Send a `STOP_SENDING` QUIC code.
     fn stop_sending(&mut self, error_code: u64);
 
+    /// Poll for the peer resetting the stream with a `RESET_STREAM` frame.
+    ///
+    /// This does not read from the stream, so it can be polled while the application is not
+    /// ready for more data, to learn that the peer abandoned the stream.
+    ///
+    /// Resolves to `Ok(Some(error_code))` with the error code of the peer's `RESET_STREAM`
+    /// frame, or to `Ok(None)` once the receiving side is closed and the peer can no longer
+    /// reset it, for example after all the data was read or after [`RecvStream::stop_sending`].
+    /// Resolves to an error if the connection is lost.
+    ///
+    /// Once this resolved to `Ok(Some(error_code))`, implementations must make
+    /// [`RecvStream::poll_data`] fail with [`StreamErrorIncoming::StreamTerminated`] and the
+    /// same error code.
+    fn poll_received_reset(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Option<u64>, StreamErrorIncoming>>;
+
     /// Get QUIC send stream id
     fn recv_id(&self) -> StreamId;
 }

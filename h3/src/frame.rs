@@ -140,6 +140,14 @@ where
         self.stream.stop_sending(error_code.into());
     }
 
+    /// Polls for the peer resetting the underlying stream
+    pub(crate) fn poll_received_reset(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
+        self.stream.poll_received_reset(cx)
+    }
+
     pub(crate) fn has_data(&self) -> bool {
         self.remaining_data != 0
     }
@@ -668,6 +676,13 @@ mod tests {
         }
 
         fn stop_sending(&mut self, _: u64) {
+            unimplemented!()
+        }
+
+        fn poll_received_reset(
+            &mut self,
+            _: &mut Context<'_>,
+        ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
             unimplemented!()
         }
 

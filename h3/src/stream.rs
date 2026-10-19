@@ -533,6 +533,13 @@ impl<S: RecvStream, B> RecvStream for BufRecvStream<S, B> {
         self.stream.stop_sending(error_code)
     }
 
+    fn poll_received_reset(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
+        self.stream.poll_received_reset(cx)
+    }
+
     fn recv_id(&self) -> quic::StreamId {
         self.stream.recv_id()
     }
