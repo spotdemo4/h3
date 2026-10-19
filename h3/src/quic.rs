@@ -87,6 +87,50 @@ pub enum StreamErrorIncoming {
 
 impl std::error::Error for StreamErrorIncoming {}
 
+/// Converts the error for the `AsyncRead` and `AsyncWrite` implementations of streams.
+///
+/// The [`std::io::ErrorKind`] tells a stream that was terminated apart from a connection that
+/// was lost:
+///
+/// | Error | Kind |
+/// |---|---|
+/// | [`StreamErrorIncoming::StreamTerminated`] | [`ConnectionReset`](std::io::ErrorKind::ConnectionReset) |
+/// | [`ConnectionErrorIncoming::Timeout`] | [`TimedOut`](std::io::ErrorKind::TimedOut) |
+/// | [`ConnectionErrorIncoming::ApplicationClose`], [`ConnectionErrorIncoming::ConnectionClosed`] | [`ConnectionAborted`](std::io::ErrorKind::ConnectionAborted) |
+/// | Other [`StreamErrorIncoming::ConnectionErrorIncoming`] | [`NotConnected`](std::io::ErrorKind::NotConnected) |
+/// | [`StreamErrorIncoming::Unknown`] | [`Other`](std::io::ErrorKind::Other) |
+///
+/// The [`StreamErrorIncoming`] is kept as the inner error, so error codes can be recovered:
+///
+/// ```
+/// # use h3::quic::StreamErrorIncoming;
+/// let error = std::io::Error::from(StreamErrorIncoming::StreamTerminated { error_code: 42 });
+/// assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
+/// let inner = error.get_ref().and_then(|e| e.downcast_ref::<StreamErrorIncoming>());
+/// assert!(matches!(inner, Some(StreamErrorIncoming::StreamTerminated { error_code: 42 })));
+/// ```
+impl From<StreamErrorIncoming> for std::io::Error {
+    fn from(error: StreamErrorIncoming) -> Self {
+        use std::io::ErrorKind;
+        let kind = match &error {
+            StreamErrorIncoming::StreamTerminated { .. } => ErrorKind::ConnectionReset,
+            StreamErrorIncoming::ConnectionErrorIncoming { connection_error } => {
+                match connection_error {
+                    ConnectionErrorIncoming::Timeout => ErrorKind::TimedOut,
+                    ConnectionErrorIncoming::ApplicationClose { .. }
+                    | ConnectionErrorIncoming::ConnectionClosed { .. } => {
+                        ErrorKind::ConnectionAborted
+                    }
+                    ConnectionErrorIncoming::InternalError(_)
+                    | ConnectionErrorIncoming::Undefined(_) => ErrorKind::NotConnected,
+                }
+            }
+            StreamErrorIncoming::Unknown(_) => ErrorKind::Other,
+        };
+        Self::new(kind, error)
+    }
+}
+
 impl Display for StreamErrorIncoming {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // display enum with fields

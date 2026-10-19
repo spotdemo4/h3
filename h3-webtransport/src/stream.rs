@@ -97,7 +97,7 @@ fn session_gone() -> StreamErrorIncoming {
 }
 
 fn session_gone_io() -> std::io::Error {
-    std::io::Error::other(session_gone())
+    session_gone().into()
 }
 
 fn reset<S: quic::SendStream<B>, B: Buf>(stream: &mut BufRecvStream<S, B>) {
@@ -116,6 +116,11 @@ fn reset_and_stop_sending<S: quic::SendStream<B> + quic::RecvStream, B: Buf>(
 }
 
 /// WebTransport receive stream
+///
+/// The `AsyncRead` implementations report a [`StreamErrorIncoming`] as an [`std::io::Error`]
+/// whose kind tells a reset stream apart from a lost connection, and which keeps the
+/// [`StreamErrorIncoming`] as its inner error. [`quic::RecvStream::poll_data`] returns it
+/// directly.
 pub struct RecvStream<S, B> {
     stream: BufRecvStream<S, B>,
     guard: SessionGuard<S, B>,
@@ -222,6 +227,11 @@ where
 }
 
 /// WebTransport send stream
+///
+/// The `AsyncWrite` implementations report a [`StreamErrorIncoming`] as an [`std::io::Error`]
+/// whose kind tells a stopped stream apart from a lost connection, and which keeps the
+/// [`StreamErrorIncoming`] as its inner error. [`quic::SendStreamUnframed::poll_send`] returns it
+/// directly.
 pub struct SendStream<S, B> {
     stream: BufRecvStream<S, B>,
     guard: SessionGuard<S, B>,
@@ -390,6 +400,11 @@ where
 ///
 /// Can be split into a [`RecvStream`] and [`SendStream`] if the underlying QUIC implementation
 /// supports it.
+///
+/// The `AsyncRead` and `AsyncWrite` implementations report a [`StreamErrorIncoming`] as an
+/// [`std::io::Error`] whose kind tells a terminated stream apart from a lost connection, and
+/// which keeps the [`StreamErrorIncoming`] as its inner error. The `quic` trait methods return
+/// it directly.
 pub struct BidiStream<S, B> {
     // Only `None` after `split()`, which needs to move it out despite the `Drop` impl.
     stream: Option<BufRecvStream<S, B>>,

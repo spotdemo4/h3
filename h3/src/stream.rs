@@ -393,6 +393,9 @@ pin_project! {
     ///
     /// Implements `quic::RecvStream` which will first return buffered data, and then read from the
     /// stream
+    ///
+    /// The `AsyncRead` and `AsyncWrite` implementations convert a [`StreamErrorIncoming`] to an
+    /// [`std::io::Error`] as described on its `From` implementation.
     pub struct BufRecvStream<S, B> {
         buf: BufList<Bytes>,
         // Indicates that the end of the stream has been reached
@@ -614,7 +617,7 @@ where
         // If there is data available *do not* poll for more data, as that may suspend indefinitely
         // if no more data is sent, causing data loss.
         if !p.has_remaining() {
-            let eos = ready!(p.poll_read(cx).map_err(convert_to_std_io_error))?;
+            let eos = ready!(p.poll_read(cx).map_err(std::io::Error::from))?;
             if eos {
                 return Poll::Ready(Ok(0));
             }
@@ -649,7 +652,7 @@ where
         // If there is data available *do not* poll for more data, as that may suspend indefinitely
         // if no more data is sent, causing data loss.
         if !p.has_remaining() {
-            let eos = ready!(p.poll_read(cx).map_err(convert_to_std_io_error))?;
+            let eos = ready!(p.poll_read(cx).map_err(std::io::Error::from))?;
             if eos {
                 return Poll::Ready(Ok(()));
             }
@@ -678,7 +681,7 @@ where
         mut buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         let p = &mut *self;
-        p.poll_send(cx, &mut buf).map_err(convert_to_std_io_error)
+        p.poll_send(cx, &mut buf).map_err(std::io::Error::from)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -687,7 +690,7 @@ where
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let p = &mut *self;
-        p.poll_finish(cx).map_err(convert_to_std_io_error)
+        p.poll_finish(cx).map_err(std::io::Error::from)
     }
 }
 
@@ -702,7 +705,7 @@ where
         mut buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         let p = &mut *self;
-        p.poll_send(cx, &mut buf).map_err(convert_to_std_io_error)
+        p.poll_send(cx, &mut buf).map_err(std::io::Error::from)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -711,12 +714,8 @@ where
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let p = &mut *self;
-        p.poll_finish(cx).map_err(convert_to_std_io_error)
+        p.poll_finish(cx).map_err(std::io::Error::from)
     }
-}
-
-fn convert_to_std_io_error(error: StreamErrorIncoming) -> std::io::Error {
-    std::io::Error::other(error)
 }
 
 #[cfg(test)]
