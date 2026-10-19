@@ -19,21 +19,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Safari
-            os: macos-26
-            browser: safari
-            mode: trusted
-          - name: Safari (certificate hashes)
-            os: macos-26
-            browser: safari
-            mode: hash
-          # Safari 26 offers drafts 07 and 13, but cancels its CONNECT unless the server
-          # advertises draft 07.
-          - name: Safari (drafts 02 and 07)
-            os: macos-26
-            browser: safari
-            mode: trusted
-            drafts: "02,07"
           - name: Chrome
             os: ubuntu-latest
             browser: chrome
@@ -51,33 +36,74 @@ jobs:
       - name: Show browser versions
         run: |
           case "${{ matrix.browser }}" in
-            safari)
-              sw_vers
-              defaults read /Applications/Safari.app/Contents/Info.plist CFBundleShortVersionString
-              ;;
             chrome) google-chrome --version ;;
             firefox) firefox --version ;;
           esac
-      - name: Enable safaridriver
-        if: matrix.browser == 'safari'
-        run: sudo safaridriver --enable
       - name: Build server
         run: cargo build --example webtransport_server
       - name: Run interop test
         env:
           WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop
-          WT_DRAFTS: ${{ matrix.drafts }}
         run: ci/webtransport-interop/interop.sh ${{ matrix.browser }} ${{ matrix.mode }}
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wt-interop-${{ matrix.browser }}-${{ matrix.mode }}
+          path: ${{ runner.temp }}/wt-interop
+
+  safari:
+    # Only the first test decides the job's result. The certificate hash and drafts 02
+    # and 07 tests may fail without failing the job.
+    name: Safari
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Show browser versions
+        run: |
+          sw_vers
+          defaults read /Applications/Safari.app/Contents/Info.plist CFBundleShortVersionString
+      - name: Enable safaridriver
+        run: sudo safaridriver --enable
+      - name: Build server
+        run: |
+          mkdir -p "$RUNNER_TEMP/wt-interop"
+          touch "$RUNNER_TEMP/wt-interop/started"
+          cargo build --example webtransport_server
+      - name: Run interop test
+        env:
+          WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop/trusted
+        run: ci/webtransport-interop/interop.sh safari trusted
+      - name: Run interop test (certificate hashes)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop/hash
+        run: ci/webtransport-interop/interop.sh safari hash
+      # Safari 26 offers drafts 07 and 13, but cancels its CONNECT unless the server
+      # advertises draft 07.
+      - name: Run interop test (drafts 02 and 07)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop/drafts-02-07
+          WT_DRAFTS: "02,07"
+        run: ci/webtransport-interop/interop.sh safari trusted
       - name: Collect crash reports
-        if: always() && matrix.browser == 'safari'
+        if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/wt-interop/crashes"
-          find ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports -newer "$RUNNER_TEMP/wt-interop/certs/ca.pem" \
+          find ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports -newer "$RUNNER_TEMP/wt-interop/started" \
             \( -iname '*webkit*' -o -iname '*safari*' -o -iname '*webcontent*' -o -iname '*networking*' \) \
             -exec cp {} "$RUNNER_TEMP/wt-interop/crashes/" \; 2>/dev/null || true
           ls -la "$RUNNER_TEMP/wt-interop/crashes"
           ls -la ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports 2>/dev/null || true
-          log show --last 10m --style compact \
+          log show --last 30m --style compact \
             --predicate 'process BEGINSWITH "com.apple.WebKit" OR process == "Safari" OR process == "safaridriver" OR process == "ReportCrash"' \
             2>/dev/null | tail -n 20000 >"$RUNNER_TEMP/wt-interop/crashes/unified.log" || true
           grep -iE "crash|terminat|jetsam|exception|webtransport" "$RUNNER_TEMP/wt-interop/crashes/unified.log" | tail -n 80 || true
@@ -85,5 +111,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: wt-interop-${{ matrix.browser }}-${{ matrix.mode }}-drafts-${{ matrix.drafts || 'all' }}
+          name: wt-interop-safari
           path: ${{ runner.temp }}/wt-interop
