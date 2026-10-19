@@ -5,6 +5,7 @@ use std::{
 };
 
 use bytes::{Buf, Bytes};
+use futures_util::future::poll_fn;
 use h3::{
     quic::{self, RecvStream as _, SendStream as _, StreamErrorIncoming},
     stream::BufRecvStream,
@@ -224,6 +225,13 @@ impl<S: quic::SendStream<B>, B: Buf> SendStream<S, B> {
             guard: SessionGuard::new(Some(session), reset),
         }
     }
+
+    /// Waits for the peer to stop this stream with `STOP_SENDING`.
+    ///
+    /// See [`quic::SendStream::poll_stopped`].
+    pub async fn stopped(&mut self) -> Result<Option<u64>, StreamErrorIncoming> {
+        poll_fn(|cx| quic::SendStream::poll_stopped(self, cx)).await
+    }
 }
 
 impl<S, B> Drop for SendStream<S, B> {
@@ -263,6 +271,16 @@ where
 
     fn reset(&mut self, reset_code: u64) {
         self.stream.reset(reset_code)
+    }
+
+    fn poll_stopped(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
+        self.guard
+            .poll(&mut self.stream, cx, session_gone, |s, cx| {
+                s.poll_stopped(cx)
+            })
     }
 
     fn send_id(&self) -> quic::StreamId {
@@ -377,6 +395,13 @@ impl<S: quic::SendStream<B> + quic::RecvStream, B: Buf> BidiStream<S, B> {
             guard: SessionGuard::new(Some(session), reset_and_stop_sending),
         }
     }
+
+    /// Waits for the peer to stop the send side of this stream with `STOP_SENDING`.
+    ///
+    /// See [`quic::SendStream::poll_stopped`].
+    pub async fn stopped(&mut self) -> Result<Option<u64>, StreamErrorIncoming> {
+        poll_fn(|cx| quic::SendStream::poll_stopped(self, cx)).await
+    }
 }
 
 impl<S, B> Drop for BidiStream<S, B> {
@@ -399,6 +424,14 @@ where
 
     fn reset(&mut self, reset_code: u64) {
         self.parts().0.reset(reset_code)
+    }
+
+    fn poll_stopped(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
+        let (stream, guard) = self.parts();
+        guard.poll(stream, cx, session_gone, |s, cx| s.poll_stopped(cx))
     }
 
     fn send_id(&self) -> quic::StreamId {

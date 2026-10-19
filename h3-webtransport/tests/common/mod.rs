@@ -21,6 +21,8 @@ pub struct Setup {
     /// The client's side of the CONNECT stream
     pub stream: ClientStream,
     pub response: Response<()>,
+    /// The client's QUIC connection, to open WebTransport streams
+    pub conn: quinn::Connection,
     // Keep the client alive
     _client: quinn::Endpoint,
     _send_request: h3::client::SendRequest<h3_quinn::OpenStreams, Bytes>,
@@ -116,6 +118,7 @@ pub async fn setup_with_headers(
         QuicClientConfig::try_from(client_crypto).unwrap(),
     )));
     let conn = client.connect(addr, "localhost").unwrap().await.unwrap();
+    let quic_conn = conn.clone();
 
     let (mut driver, mut send_request) = h3::client::builder()
         .enable_webtransport(true)
@@ -142,6 +145,7 @@ pub async fn setup_with_headers(
         request,
         stream,
         response,
+        conn: quic_conn,
         _client: client,
         _send_request: send_request,
     }
