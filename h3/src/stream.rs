@@ -284,7 +284,6 @@ pub(super) struct AcceptRecvStream<S, B> {
     ty: Option<StreamType>,
     /// push_id or session_id
     id: Option<VarInt>,
-    expected: Option<usize>,
 }
 
 impl<S, B> AcceptRecvStream<S, B>
@@ -297,7 +296,6 @@ where
             stream: BufRecvStream::new(stream),
             ty: None,
             id: None,
-            expected: None,
         }
     }
 
@@ -316,69 +314,49 @@ where
     }
 
     // helper function to poll the next VarInt from self.stream
-    fn poll_next_varint(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(VarInt, Option<StreamEnd>), PollTypeError>> {
-        // Flag if the stream was reset or finished by the peer
-        let mut stream_stopped = None;
-
+    fn poll_next_varint(&mut self, cx: &mut Context<'_>) -> Poll<Result<VarInt, PollTypeError>> {
         loop {
-            if stream_stopped.is_some() {
-                return Poll::Ready(Err(PollTypeError::EndOfStream));
+            // Decode from what is already buffered first: a single read can return several
+            // VarInts, such as a stream type and a session ID, and the peer may send nothing more
+            // until the stream is accepted.
+            let buf = self.stream.buf_mut();
+            if let Some(&first) = buf.chunk().first() {
+                if buf.remaining() >= VarInt::encoded_size(first) {
+                    return Poll::Ready(VarInt::decode(buf).map_err(|_| {
+                        PollTypeError::InternalError(InternalConnectionError::new(
+                            Code::H3_INTERNAL_ERROR,
+                            "Unexpected end parsing varint".to_string(),
+                        ))
+                    }));
+                }
             }
+
             //= https://www.rfc-editor.org/rfc/rfc9114#section-6.2
             //# A receiver MUST tolerate unidirectional streams being
             //# closed or reset prior to the reception of the unidirectional stream
             //# header.
-            stream_stopped = match ready!(self.stream.poll_read(cx)) {
-                Ok(false) => None,
-                Ok(true) => Some(StreamEnd::EndOfStream),
+            match ready!(self.stream.poll_read(cx)) {
+                Ok(false) => (),
+                Ok(true) | Err(StreamErrorIncoming::StreamTerminated { .. }) => {
+                    return Poll::Ready(Err(PollTypeError::EndOfStream));
+                }
                 Err(StreamErrorIncoming::ConnectionErrorIncoming { connection_error }) => {
                     return Poll::Ready(Err(PollTypeError::IncomingError(connection_error)));
-                }
-                Err(StreamErrorIncoming::StreamTerminated { error_code }) => {
-                    Some(StreamEnd::Reset(error_code))
                 }
                 Err(StreamErrorIncoming::Unknown(_err)) => {
                     #[cfg(feature = "tracing")]
                     tracing::error!("Unknown error when reading stream {}", _err);
 
-                    Some(StreamEnd::Other)
+                    return Poll::Ready(Err(PollTypeError::EndOfStream));
                 }
-            };
-
-            let mut buf = self.stream.buf_mut();
-            if self.expected.is_none() && buf.remaining() >= 1 {
-                self.expected = Some(VarInt::encoded_size(buf.chunk()[0]));
             }
-
-            if let Some(expected) = self.expected {
-                if buf.remaining() < expected {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-
-            let reult = VarInt::decode(&mut buf).map_err(|_| {
-                PollTypeError::InternalError(InternalConnectionError::new(
-                    Code::H3_INTERNAL_ERROR,
-                    "Unexpected end parsing varint".to_string(),
-                ))
-            })?;
-
-            return Poll::Ready(Ok((reult, stream_stopped)));
         }
     }
 
     pub fn poll_type(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), PollTypeError>> {
         // If we haven't parsed the stream type yet
         if self.ty.is_none() {
-            // TODO create a test for the StreamEnd Option
-            // If the stream ended or reset directly after the type was received
-            // can we poll data again?
-            let (var, _) = ready!(self.poll_next_varint(cx))?;
+            let var = ready!(self.poll_next_varint(cx))?;
             let ty = StreamType::from_value(var.0);
             self.ty = Some(ty);
         }
@@ -389,20 +367,12 @@ where
             Some(StreamType::PUSH | StreamType::WEBTRANSPORT_UNI)
         ) && self.id.is_none()
         {
-            let (var, _) = ready!(self.poll_next_varint(cx))?;
+            let var = ready!(self.poll_next_varint(cx))?;
             self.id = Some(var);
         }
 
         Poll::Ready(Ok(()))
     }
-}
-
-enum StreamEnd {
-    EndOfStream,
-    #[allow(dead_code)]
-    Reset(u64),
-    // if the quic layer returns an unknown error
-    Other,
 }
 
 pub(super) enum PollTypeError {
@@ -840,5 +810,107 @@ mod tests {
 
         wbuf.advance(4);
         assert_eq!(wbuf.chunk(), b"ey");
+    }
+
+    /// Polls the type of a stream that yields `chunks`, then ends if `fin`, or stays pending
+    fn poll_type(
+        chunks: &[&'static [u8]],
+        fin: bool,
+    ) -> (Poll<()>, AcceptRecvStream<FakeRecv, Bytes>) {
+        let mut stream = AcceptRecvStream::new(FakeRecv {
+            chunks: chunks.iter().map(|c| Bytes::from_static(c)).collect(),
+            fin,
+        });
+        let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
+        let poll = stream.poll_type(&mut cx).map(|result| match result {
+            Ok(()) => (),
+            Err(PollTypeError::EndOfStream) => panic!("end of stream"),
+            Err(_) => panic!("error"),
+        });
+        (poll, stream)
+    }
+
+    #[test]
+    fn accept_wt_uni_header_alone() {
+        // The peer may send nothing more until the stream is accepted
+        let (poll, stream) = poll_type(&[b"\x40\x54\x04"], false);
+        assert!(poll.is_ready());
+        let AcceptedRecvStream::WebTransportUni(id, _) = stream.into_stream() else {
+            panic!("expected a WebTransport stream");
+        };
+        assert_eq!(id, SessionId::from_varint(VarInt(4)));
+    }
+
+    #[test]
+    fn accept_wt_uni_header_split() {
+        let (poll, stream) = poll_type(&[b"\x40", b"\x54", b"\x44", b"\x00"], false);
+        assert!(poll.is_ready());
+        let AcceptedRecvStream::WebTransportUni(id, _) = stream.into_stream() else {
+            panic!("expected a WebTransport stream");
+        };
+        assert_eq!(id, SessionId::from_varint(VarInt(0x400)));
+    }
+
+    #[test]
+    fn accept_wt_uni_header_keeps_payload() {
+        let (poll, stream) = poll_type(&[b"\x40\x54\x04hey"], true);
+        assert!(poll.is_ready());
+        let AcceptedRecvStream::WebTransportUni(_, mut stream) = stream.into_stream() else {
+            panic!("expected a WebTransport stream");
+        };
+        assert_eq!(stream.take_chunk(usize::MAX).as_deref(), Some(&b"hey"[..]));
+    }
+
+    #[test]
+    fn accept_wt_uni_header_then_fin() {
+        let (poll, _) = poll_type(&[b"\x40\x54\x04"], true);
+        assert!(poll.is_ready());
+    }
+
+    #[test]
+    fn accept_incomplete_header_pending() {
+        let (poll, _) = poll_type(&[b"\x40\x54\x44"], false);
+        assert!(poll.is_pending());
+    }
+
+    #[test]
+    #[should_panic(expected = "end of stream")]
+    fn accept_incomplete_header_then_fin() {
+        let _ = poll_type(&[b"\x40\x54\x44"], true);
+    }
+
+    struct FakeRecv {
+        chunks: std::collections::VecDeque<Bytes>,
+        fin: bool,
+    }
+
+    impl RecvStream for FakeRecv {
+        type Buf = Bytes;
+
+        fn poll_data(
+            &mut self,
+            _: &mut Context<'_>,
+        ) -> Poll<Result<Option<Self::Buf>, StreamErrorIncoming>> {
+            match self.chunks.pop_front() {
+                Some(chunk) => Poll::Ready(Ok(Some(chunk))),
+                None if self.fin => Poll::Ready(Ok(None)),
+                None => Poll::Pending,
+            }
+        }
+
+        fn stop_sending(&mut self, _: u64) {
+            unimplemented!()
+        }
+
+        fn poll_received_reset(
+            &mut self,
+            _: &mut Context<'_>,
+        ) -> Poll<Result<Option<u64>, StreamErrorIncoming>> {
+            unimplemented!()
+        }
+
+        fn recv_id(&self) -> quic::StreamId {
+            unimplemented!()
+        }
     }
 }

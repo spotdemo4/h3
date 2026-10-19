@@ -27,7 +27,7 @@
 
 This is a fork of [hyperium/h3](https://github.com/hyperium/h3) that makes `h3-webtransport` work with the WebTransport implementations in Chrome, Firefox and Safari, and with clients of newer drafts of [WebTransport over HTTP/3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/). The browser badges show the latest results of interop tests that run against each browser on every push to `master` and every pull request. The draft badges list the drafts a server built on this fork can negotiate.
 
-The changes are meant to go upstream. They address [hyperium/h3#347](https://github.com/hyperium/h3/issues/347) (Safari cannot establish a session), [hyperium/h3#349](https://github.com/hyperium/h3/issues/349) (no API to close a session), [hyperium/h3#350](https://github.com/hyperium/h3/issues/350) (no way to notice STOP_SENDING without writing), and [hyperium/h3#352](https://github.com/hyperium/h3/issues/352) (no way to notice RESET_STREAM without reading).
+The changes are meant to go upstream. They address [hyperium/h3#347](https://github.com/hyperium/h3/issues/347) (Safari cannot establish a session), [hyperium/h3#349](https://github.com/hyperium/h3/issues/349) (no API to close a session), [hyperium/h3#350](https://github.com/hyperium/h3/issues/350) (no way to notice STOP_SENDING without writing), [hyperium/h3#352](https://github.com/hyperium/h3/issues/352) (no way to notice RESET_STREAM without reading), and [hyperium/h3#376](https://github.com/hyperium/h3/issues/376) (a unidirectional stream is not accepted until more data follows its header).
 
 ## What this fork adds
 
@@ -40,6 +40,7 @@ The changes are meant to go upstream. They address [hyperium/h3#347](https://git
   - `WebTransportSession::accept` waits for the client's SETTINGS instead of failing when the CONNECT request arrives first.
   - A session's ID is its CONNECT stream's ID; it used to be wrong on any stream other than 0.
   - A SETTINGS frame can hold every setting a browser sends, and encoding the largest one no longer panics.
+  - A unidirectional stream is accepted as soon as its header arrives. If the session ID or push ID came in the same read as the stream type, `accept_uni` used to wait for more data, and a stream with only a header and FIN was dropped.
 - **Browser interop tests** ([`ci/webtransport-interop`](ci/webtransport-interop)) run `examples/webtransport_server.rs` against Chrome and Firefox on Linux and Safari on macOS. They cover streams in both directions, datagrams, drain, and closing from either side.
 
 ## WebTransport drafts

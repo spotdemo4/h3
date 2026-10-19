@@ -56,6 +56,25 @@ async fn split_recv_stream_reset_by_client() {
 }
 
 #[tokio::test]
+async fn uni_stream_reset_by_client() {
+    let setup = setup().await;
+    let mut send = setup.conn.open_uni().await.unwrap();
+    let mut header = BytesMut::new();
+    write_var(&mut header, 0x54);
+    write_var(&mut header, setup.stream.id().into_inner());
+    send.write_all(&header).await.unwrap();
+    let (_, mut stream) = timeout(TIMEOUT, setup.session.accept_uni())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    send.reset(VarInt::from_u32(3)).unwrap();
+    let reset = timeout(TIMEOUT, stream.received_reset()).await.unwrap();
+    assert!(matches!(reset, Ok(Some(3))), "{reset:?}");
+}
+
+#[tokio::test]
 async fn received_reset_fails_when_the_session_closes() {
     let setup = setup().await;
     let (_send, _recv, mut stream) = open_bi(&setup).await;
