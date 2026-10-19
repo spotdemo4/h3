@@ -18,13 +18,10 @@ runs:
       with:
         toolchain: stable
 
-    - name: Cache builds
-      uses: camshaft/rust-cache@v1
-
-    - name: Install Duvet w/ caching
-      uses: camshaft/install@v1
+    - name: Install Duvet
+      uses: taiki-e/install-action@v2
       with:
-        crate: duvet
+        tool: duvet
 
     - name: Set variables
       shell: bash
