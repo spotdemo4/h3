@@ -24,13 +24,14 @@
 
 This is a fork of [hyperium/h3](https://github.com/hyperium/h3) that makes `h3-webtransport` work with the WebTransport implementations in Chrome, Firefox and Safari, and with clients of newer drafts of [WebTransport over HTTP/3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/). The browser badges show the latest results of interop tests that run against each browser on every push to `master` and every pull request. The draft badges list the drafts a server built on this fork can negotiate.
 
-The changes are meant to go upstream. They address [hyperium/h3#347](https://github.com/hyperium/h3/issues/347) (Safari cannot establish a session) and [hyperium/h3#349](https://github.com/hyperium/h3/issues/349) (no API to close a session).
+The changes are meant to go upstream. They address [hyperium/h3#347](https://github.com/hyperium/h3/issues/347) (Safari cannot establish a session), [hyperium/h3#349](https://github.com/hyperium/h3/issues/349) (no API to close a session), and [hyperium/h3#350](https://github.com/hyperium/h3/issues/350) (no way to notice STOP_SENDING without writing).
 
 ## What this fork adds
 
 - **Draft negotiation.** A server advertises every supported draft and uses the latest one the client also supports. Choose the drafts with `Builder::webtransport_drafts`; `WebTransportSession::draft()` returns the one in use.
 - **Session close and drain.** `WebTransportSession::close(code, reason)`, `drain()`, `closed()` and `draining()` send and receive the `WT_CLOSE_SESSION` and `WT_DRAIN_SESSION` capsules. When a session ends, its streams are reset with `WT_SESSION_GONE`.
 - **Response headers.** `WebTransportSession::accept` takes a `HeaderMap` to add to the response, such as `wt-protocol` to pick one of the protocols the client offered in `wt-available-protocols` ([hyperium/h3#375](https://github.com/hyperium/h3/pull/375)).
+- **STOP_SENDING notification.** `RequestStream::stopped()` on the client and server, and `stopped()` on WebTransport send and bidirectional streams, resolve when the peer sends STOP_SENDING. No write needs to be pending, so a server can `select!` on it while it waits to produce a response and cancel the work as soon as the client loses interest. QUIC backends implement the new `quic::SendStream::poll_stopped`; `h3-quinn` does.
 - **Fixes:**
   - `WebTransportSession::accept` waits for the client's SETTINGS instead of failing when the CONNECT request arrives first.
   - A session's ID is its CONNECT stream's ID; it used to be wrong on any stream other than 0.
