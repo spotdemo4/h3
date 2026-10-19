@@ -1782,6 +1782,65 @@ async fn server_stopped_after_finish() {
     tokio::join!(server_fut, client_fut);
 }
 
+/// `stop_sending` reaches the peer even while a read of the stream is in progress, rather than
+/// waiting for that read to finish.
+#[tokio::test]
+async fn stop_sending_during_read() {
+    init_tracing();
+    let mut pair = Pair::default();
+    let mut server = pair.server();
+    let (done_tx, done_rx) = futures::channel::oneshot::channel::<()>();
+
+    let client_fut = async {
+        let (mut driver, mut client) = client::new(pair.client().await).await.expect("client init");
+        let drive_fut = async { future::poll_fn(|cx| driver.poll_close(cx)).await };
+        let req_fut = async move {
+            let mut request_stream = client
+                .send_request(Request::post("http://localhost/salut").body(()).unwrap())
+                .await
+                .expect("request");
+
+            assert_matches!(
+                tokio::time::timeout(Duration::from_secs(5), request_stream.stopped())
+                    .await
+                    .expect("STOP_SENDING not received"),
+                Ok(Some(code)) if code == Code::H3_REQUEST_CANCELLED
+            );
+            done_tx.send(()).unwrap();
+        };
+        tokio::join!(req_fut, drive_fut)
+    };
+
+    let server_fut = async {
+        let conn = server.next().await;
+        let mut incoming_req = server::Connection::new(conn).await.unwrap();
+
+        let (_request, mut request_stream) = get_stream_blocking(&mut incoming_req)
+            .await
+            .expect("accept");
+
+        // The client sends no body, so this leaves a read of the stream in progress.
+        future::poll_fn(|cx| {
+            assert!(request_stream.poll_recv_data(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        request_stream.stop_sending(Code::H3_REQUEST_CANCELLED);
+
+        // Keep the stream alive, since dropping it would also stop it.
+        done_rx.await.expect("done signal");
+        drop(request_stream);
+
+        assert_matches!(
+            incoming_req.accept().await.err().unwrap(),
+            ConnectionError::Remote(ConnectionErrorIncoming::ApplicationClose{error_code: code, ..})
+            if code == Code::H3_NO_ERROR.value()
+        );
+    };
+
+    tokio::join!(server_fut, client_fut);
+}
+
 /// A client learns from `stopped` that the server does not want the rest of the request body,
 /// and can still receive the response.
 #[tokio::test]

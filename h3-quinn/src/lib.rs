@@ -6,7 +6,7 @@
 use std::{
     convert::TryInto,
     future::Future,
-    pin::Pin,
+    pin::{pin, Pin},
     sync::Arc,
     task::{self, ready, Poll},
 };
@@ -25,7 +25,6 @@ use h3::{
     error::Code,
     quic::{self, ConnectionErrorIncoming, StreamErrorIncoming, StreamId, WriteBuf},
 };
-use tokio_util::sync::ReusableBoxFuture;
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -383,20 +382,10 @@ where
 ///
 /// Implements a [`quic::RecvStream`] backed by a [`quinn::RecvStream`].
 pub struct RecvStream {
-    stream: Option<quinn::RecvStream>,
-    read_chunk_fut: ReadChunkFuture,
+    stream: quinn::RecvStream,
     id: StreamId,
     is_0rtt: bool,
-    pending_stop: Option<VarInt>,
 }
-
-type ReadChunkFuture = ReusableBoxFuture<
-    'static,
-    (
-        quinn::RecvStream,
-        Result<Option<quinn::Chunk>, quinn::ReadError>,
-    ),
->;
 
 impl RecvStream {
     fn new(stream: quinn::RecvStream) -> Self {
@@ -405,12 +394,9 @@ impl RecvStream {
             .expect("invalid stream id");
         let is_0rtt = stream.is_0rtt();
         Self {
-            stream: Some(stream),
-            // Should only allocate once the first time it's used
-            read_chunk_fut: ReusableBoxFuture::new(async { unreachable!() }),
+            stream,
             id,
             is_0rtt,
-            pending_stop: None,
         }
     }
 }
@@ -423,18 +409,9 @@ impl quic::RecvStream for RecvStream {
         &mut self,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<Option<Self::Buf>, StreamErrorIncoming>> {
-        if let Some(mut stream) = self.stream.take() {
-            self.read_chunk_fut.set(async move {
-                let chunk = stream.read_chunk(usize::MAX, true).await;
-                (stream, chunk)
-            })
-        };
-
-        let (mut stream, chunk) = ready!(self.read_chunk_fut.poll(cx));
-        if let Some(error_code) = self.pending_stop.take() {
-            let _ = stream.stop(error_code);
-        }
-        self.stream = Some(stream);
+        // `read_chunk` is cancel-safe, so a fresh future can be polled on every call. This keeps
+        // the stream in place between reads, so `stop_sending` can stop it at any time.
+        let chunk = ready!(pin!(self.stream.read_chunk(usize::MAX, true)).poll(cx));
         Poll::Ready(Ok(chunk
             .map_err(convert_read_error_to_stream_error)?
             .map(|c| c.bytes)))
@@ -442,12 +419,9 @@ impl quic::RecvStream for RecvStream {
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, level = "trace"))]
     fn stop_sending(&mut self, error_code: u64) {
-        let error_code = VarInt::from_u64(error_code).expect("invalid error_code");
-        if let Some(stream) = self.stream.as_mut() {
-            let _ = stream.stop(error_code);
-        } else {
-            self.pending_stop = Some(error_code);
-        }
+        let _ = self
+            .stream
+            .stop(VarInt::from_u64(error_code).expect("invalid error_code"));
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, level = "trace"))]

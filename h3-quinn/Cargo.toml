@@ -21,7 +21,6 @@ bytes = "1"
 quinn = { version = "0.11.9", default-features = false, features = [
     "futures-io",
 ] }
-tokio-util = { version = "0.7.9" }
 futures-util = { version = "0.3.28", default-features = false }
 h3-datagram = { workspace = true, optional = true }
 tracing = { version = "0.1.40", optional = true }
