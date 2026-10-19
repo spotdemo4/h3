@@ -1,12 +1,9 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use h3::{
-    ext::{Protocol, WebTransportDraft},
-    server::Connection,
-};
+use h3::{ext::WebTransportDraft, server::Connection};
 use h3_quinn::quinn::{self, crypto::rustls::QuicServerConfig};
-use h3_webtransport::server::{self, WebTransportSession};
-use http::{HeaderMap, Method};
+use h3_webtransport::server::{self, Accepted, WebTransportSession};
+use http::HeaderMap;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use structopt::StructOpt;
@@ -190,31 +187,28 @@ async fn handle_connection(mut conn: Connection<h3_quinn::Connection, Bytes>) ->
                 };
                 info!("new request: {:#?}", req);
 
-                let ext = req.extensions();
-                match req.method() {
-                    &Method::CONNECT
-                        if ext.get::<Protocol>().is_some_and(Protocol::is_webtransport) =>
-                    {
-                        tracing::info!("Peer wants to initiate a webtransport session");
-
-                        tracing::info!("Handing over connection to WebTransport");
-                        let session =
-                            WebTransportSession::accept(req, stream, conn, HeaderMap::new())
-                                .await?;
-                        tracing::info!(
-                            "Established webtransport session using {:?}",
-                            session.draft()
-                        );
-                        // 4. Get datagrams, bidirectional streams, and unidirectional streams and wait for client requests here.
-                        // h3_conn needs to hand over the datagrams, bidirectional streams, and unidirectional streams to the webtransport session.
-                        handle_session_and_echo_all_inbound_messages(session).await?;
-
-                        return Ok(());
-                    }
-                    _ => {
-                        tracing::info!(?req, "Received request");
-                    }
+                if !server::is_webtransport_request(&req) {
+                    tracing::info!(?req, "Received request");
+                    continue;
                 }
+
+                tracing::info!("Peer wants to initiate a webtransport session");
+
+                tracing::info!("Handing over connection to WebTransport");
+                let Accepted::Session(session) =
+                    WebTransportSession::accept(req, stream, conn, HeaderMap::new()).await?
+                else {
+                    unreachable!("checked with is_webtransport_request");
+                };
+                tracing::info!(
+                    "Established webtransport session using {:?}",
+                    session.draft()
+                );
+                // 4. Get datagrams, bidirectional streams, and unidirectional streams and wait for client requests here.
+                // h3_conn needs to hand over the datagrams, bidirectional streams, and unidirectional streams to the webtransport session.
+                handle_session_and_echo_all_inbound_messages(session).await?;
+
+                return Ok(());
             }
             // indicating no more streams to be received
             Ok(None) => {

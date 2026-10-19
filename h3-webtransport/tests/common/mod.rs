@@ -6,7 +6,7 @@ use std::{net::Ipv6Addr, sync::Arc};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use h3::ext::{Protocol, WebTransportDraft};
-use h3_webtransport::server::WebTransportSession;
+use h3_webtransport::server::{Accepted, WebTransportSession};
 use http::{HeaderMap, Method, Request, Response};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -61,36 +61,13 @@ pub async fn setup_with_headers(
     request_headers: HeaderMap,
     response_headers: HeaderMap,
 ) -> Setup {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
-    let cert = CertificateDer::from(cert.cert);
-
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut server_crypto = rustls::ServerConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert.clone()], key)
-        .unwrap();
-    server_crypto.alpn_protocols = vec![b"h3".to_vec()];
-    let server_config = quinn::ServerConfig::with_crypto(Arc::new(
-        QuicServerConfig::try_from(server_crypto).unwrap(),
-    ));
-    let server = quinn::Endpoint::server(server_config, (Ipv6Addr::LOCALHOST, 0).into()).unwrap();
+    let (server, client) = endpoints();
     let addr = server.local_addr().unwrap();
 
     let server_drafts = server_drafts.to_vec();
     let server = tokio::spawn(async move {
         let conn = server.accept().await.unwrap().await.unwrap();
-        let mut conn = h3::server::builder()
-            .enable_webtransport(true)
-            .enable_extended_connect(true)
-            .enable_datagram(true)
-            .max_webtransport_sessions(1)
-            .webtransport_drafts(server_drafts)
-            .build::<_, Bytes>(h3_quinn::Connection::new(conn))
-            .await
-            .unwrap();
+        let mut conn = server_h3(conn, server_drafts).await;
         let (request, stream) = conn
             .accept()
             .await
@@ -99,35 +76,19 @@ pub async fn setup_with_headers(
             .resolve_request()
             .await
             .unwrap();
-        let session = WebTransportSession::accept(request.clone(), stream, conn, response_headers)
-            .await
-            .unwrap();
+        let Accepted::Session(session) =
+            WebTransportSession::accept(request.clone(), stream, conn, response_headers)
+                .await
+                .unwrap()
+        else {
+            panic!("not a WebTransport request");
+        };
         (session, request)
     });
 
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(cert).unwrap();
-    let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    client_crypto.alpn_protocols = vec![b"h3".to_vec()];
-    let mut client = quinn::Endpoint::client((Ipv6Addr::UNSPECIFIED, 0).into()).unwrap();
-    client.set_default_client_config(quinn::ClientConfig::new(Arc::new(
-        QuicClientConfig::try_from(client_crypto).unwrap(),
-    )));
     let conn = client.connect(addr, "localhost").unwrap().await.unwrap();
     let quic_conn = conn.clone();
-
-    let (mut driver, mut send_request) = h3::client::builder()
-        .enable_webtransport(true)
-        .enable_datagram(true)
-        .webtransport_drafts(client_drafts.iter().copied())
-        .build::<_, _, Bytes>(h3_quinn::Connection::new(conn))
-        .await
-        .unwrap();
-    tokio::spawn(async move { std::future::poll_fn(|cx| driver.poll_close(cx)).await });
+    let mut send_request = client_h3(conn, client_drafts).await;
 
     let mut request = Request::builder()
         .method(Method::CONNECT)
@@ -149,6 +110,73 @@ pub async fn setup_with_headers(
         _client: client,
         _send_request: send_request,
     }
+}
+
+/// Creates a server endpoint and a client endpoint that trusts it
+pub fn endpoints() -> (quinn::Endpoint, quinn::Endpoint) {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let key = PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
+    let cert = CertificateDer::from(cert.cert);
+
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut server_crypto = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert.clone()], key)
+        .unwrap();
+    server_crypto.alpn_protocols = vec![b"h3".to_vec()];
+    let server_config = quinn::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(server_crypto).unwrap(),
+    ));
+    let server = quinn::Endpoint::server(server_config, (Ipv6Addr::LOCALHOST, 0).into()).unwrap();
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(cert).unwrap();
+    let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    client_crypto.alpn_protocols = vec![b"h3".to_vec()];
+    let mut client = quinn::Endpoint::client((Ipv6Addr::UNSPECIFIED, 0).into()).unwrap();
+    client.set_default_client_config(quinn::ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(client_crypto).unwrap(),
+    )));
+
+    (server, client)
+}
+
+/// Builds the server's HTTP/3 connection with WebTransport enabled
+pub async fn server_h3(
+    conn: quinn::Connection,
+    drafts: Vec<WebTransportDraft>,
+) -> h3::server::Connection<h3_quinn::Connection, Bytes> {
+    h3::server::builder()
+        .enable_webtransport(true)
+        .enable_extended_connect(true)
+        .enable_datagram(true)
+        .max_webtransport_sessions(1)
+        .webtransport_drafts(drafts)
+        .build(h3_quinn::Connection::new(conn))
+        .await
+        .unwrap()
+}
+
+/// Builds the client's HTTP/3 connection with WebTransport enabled, driving it in a task
+pub async fn client_h3(
+    conn: quinn::Connection,
+    drafts: &[WebTransportDraft],
+) -> h3::client::SendRequest<h3_quinn::OpenStreams, Bytes> {
+    let (mut driver, send_request) = h3::client::builder()
+        .enable_webtransport(true)
+        .enable_datagram(true)
+        .webtransport_drafts(drafts.iter().copied())
+        .build::<_, _, Bytes>(h3_quinn::Connection::new(conn))
+        .await
+        .unwrap();
+    tokio::spawn(async move { std::future::poll_fn(|cx| driver.poll_close(cx)).await });
+    send_request
 }
 
 pub fn write_var(buf: &mut BytesMut, x: u64) {

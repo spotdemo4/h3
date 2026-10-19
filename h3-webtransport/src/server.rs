@@ -41,6 +41,39 @@ use crate::{
 
 pub use crate::state::{CloseInfo, SessionError};
 
+/// Returns true if `request` asks to establish a WebTransport session: a `CONNECT` request with
+/// the `webtransport` protocol.
+///
+/// [`WebTransportSession::accept`] only establishes a session for such a request.
+pub fn is_webtransport_request(request: &Request<()>) -> bool {
+    let protocol = request.extensions().get::<Protocol>();
+    matches!((request.method(), protocol), (&Method::CONNECT, Some(p)) if p.is_webtransport())
+}
+
+/// The outcome of [`WebTransportSession::accept`]
+pub enum Accepted<C, B>
+where
+    C: quic::Connection<B> + quic_traits::DatagramConnectionExt<B>,
+    C::BidiStream: quic::BidiStream<B>,
+    Connection<C, B>: HandleDatagramsExt<C, B>,
+    B: Buf,
+{
+    /// The session was established and the client was sent a `200 OK` response.
+    Session(WebTransportSession<C, B>),
+    /// The request does not ask for a WebTransport session, see [`is_webtransport_request`].
+    ///
+    /// Nothing was sent. The request, its stream and the connection are handed back, so the
+    /// caller can respond, for example with `400 Bad Request`, and keep serving the connection.
+    NotWebTransport {
+        /// The request
+        request: Request<()>,
+        /// The stream of the request
+        stream: RequestStream<C::BidiStream, B>,
+        /// The HTTP/3 connection
+        conn: Connection<C, B>,
+    },
+}
+
 type ConnectSendStream<C, B> =
     RequestStream<<<C as OpenStreams<B>>::BidiStream as quic::BidiStream<B>>::SendStream, B>;
 type ConnectRecvStream<C, B> =
@@ -125,13 +158,25 @@ where
     /// `wt-available-protocols`. They cannot set `sec-webtransport-http3-draft`, which follows
     /// the negotiated draft.
     ///
-    /// TODO: is the API or the user responsible for validating the CONNECT request?
+    /// A request that does not ask for a WebTransport session is handed back untouched as
+    /// [`Accepted::NotWebTransport`]. Check it beforehand with [`is_webtransport_request`] to
+    /// respond to other requests without handing over the connection.
+    ///
+    /// Fails if the client's settings do not allow a session, which also closes the connection.
     pub async fn accept(
         request: Request<()>,
         mut stream: RequestStream<C::BidiStream, B>,
         mut conn: Connection<C, B>,
         headers: HeaderMap,
-    ) -> Result<Self, StreamError> {
+    ) -> Result<Accepted<C, B>, StreamError> {
+        if !is_webtransport_request(&request) {
+            return Ok(Accepted::NotWebTransport {
+                request,
+                stream,
+                conn,
+            });
+        }
+
         let shared = conn.inner.shared.clone();
 
         //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-16#section-7.1
@@ -203,28 +248,20 @@ where
         // Respond to the CONNECT request.
 
         //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3/#section-3.3
-        let response = if validate_wt_connect(&request) {
-            let mut response = Response::builder().status(StatusCode::OK).body(()).unwrap();
-            let response_headers = response.headers_mut();
-            response_headers.extend(headers);
-            response_headers.remove("sec-webtransport-http3-draft");
-            if draft == WebTransportDraft::Draft02 {
-                //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-02#section-6
-                //# The server SHALL reply with a Sec-
-                //# Webtransport-Http3-Draft header indicating the selected version; its
-                //# value SHALL be draft02 for the version described in this draft.
-                response_headers.insert(
-                    "sec-webtransport-http3-draft",
-                    HeaderValue::from_static("draft02"),
-                );
-            }
-            response
-        } else {
-            Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(())
-                .unwrap()
-        };
+        let mut response = Response::builder().status(StatusCode::OK).body(()).unwrap();
+        let response_headers = response.headers_mut();
+        response_headers.extend(headers);
+        response_headers.remove("sec-webtransport-http3-draft");
+        if draft == WebTransportDraft::Draft02 {
+            //= https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-02#section-6
+            //# The server SHALL reply with a Sec-
+            //# Webtransport-Http3-Draft header indicating the selected version; its
+            //# value SHALL be draft02 for the version described in this draft.
+            response_headers.insert(
+                "sec-webtransport-http3-draft",
+                HeaderValue::from_static("draft02"),
+            );
+        }
 
         stream.send_response(response).await?;
 
@@ -237,7 +274,7 @@ where
         stream.disable_grease();
         let (send, recv) = stream.split();
 
-        Ok(Self {
+        Ok(Accepted::Session(Self {
             session_id,
             opener,
             server_conn: Mutex::new(conn),
@@ -254,7 +291,7 @@ where
             state: Arc::default(),
             draft,
             shared,
-        })
+        }))
     }
 
     /// Receive a datagram from the client
@@ -783,9 +820,4 @@ fn session_terminated() -> StreamError {
         code: Code::from(crate::WT_SESSION_GONE),
         reason: "WebTransport session terminated".to_string(),
     }
-}
-
-fn validate_wt_connect(request: &Request<()>) -> bool {
-    let protocol = request.extensions().get::<Protocol>();
-    matches!((request.method(), protocol), (&Method::CONNECT, Some(p)) if p.is_webtransport())
 }
