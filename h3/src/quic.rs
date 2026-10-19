@@ -298,6 +298,10 @@ pub trait RecvStream {
     /// reset it, for example after all the data was read or after [`RecvStream::stop_sending`].
     /// Resolves to an error if the connection is lost.
     ///
+    /// While received data is waiting to be read, implementations may stay pending without being
+    /// woken by a later reset. The reset then fails the next [`RecvStream::poll_data`] instead, so
+    /// callers that pause reading should poll this together with whatever lets them read again.
+    ///
     /// Once this resolved to `Ok(Some(error_code))`, implementations must make
     /// [`RecvStream::poll_data`] fail with [`StreamErrorIncoming::StreamTerminated`] and the
     /// same error code.

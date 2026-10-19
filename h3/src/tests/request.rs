@@ -2035,6 +2035,82 @@ async fn server_received_reset_after_end() {
     tokio::join!(server_fut, client_fut);
 }
 
+/// Polling `received_reset` while the whole request body is waiting to be read leaves nothing
+/// behind in the transport, so reading the body to the end and dropping the stream is clean.
+/// Quinn 0.11.12's own `received_reset` left a stale waker here, which tripped a debug assertion
+/// on drop.
+#[tokio::test]
+async fn server_received_reset_with_body_buffered() {
+    init_tracing();
+    let mut pair = Pair::default();
+    let mut server = pair.server();
+    let (accepted_tx, accepted_rx) = futures::channel::oneshot::channel::<()>();
+    let (sent_tx, sent_rx) = futures::channel::oneshot::channel::<()>();
+    let (done_tx, done_rx) = futures::channel::oneshot::channel::<()>();
+
+    let client_fut = async {
+        let (mut driver, mut client) = client::new(pair.client().await).await.expect("client init");
+        let drive_fut = async { future::poll_fn(|cx| driver.poll_close(cx)).await };
+        let req_fut = async move {
+            let mut request_stream = client
+                .send_request(Request::post("http://localhost/salut").body(()).unwrap())
+                .await
+                .expect("request");
+            // Sending the body only now keeps it out of the packet with the headers, which the
+            // server reads from the transport in one go.
+            accepted_rx.await.expect("accepted signal");
+            request_stream
+                .send_data(Bytes::from_static(b"body"))
+                .await
+                .expect("send_data");
+            request_stream.finish().await.expect("finish");
+            sent_tx.send(()).unwrap();
+            done_rx.await.expect("done signal");
+        };
+        tokio::join!(req_fut, drive_fut)
+    };
+
+    let server_fut = async {
+        let conn = server.next().await;
+        let mut incoming_req = server::Connection::new(conn).await.unwrap();
+
+        let (_request, mut request_stream) = get_stream_blocking(&mut incoming_req)
+            .await
+            .expect("accept");
+        accepted_tx.send(()).unwrap();
+        sent_rx.await.expect("sent signal");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        future::poll_fn(|cx| {
+            assert!(request_stream.poll_received_reset(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+
+        let data = request_stream
+            .recv_data()
+            .await
+            .expect("recv data")
+            .expect("body");
+        assert_eq!(data.chunk(), b"body");
+        assert!(request_stream
+            .recv_data()
+            .await
+            .expect("recv data")
+            .is_none());
+        assert_matches!(request_stream.received_reset().await, Ok(None));
+        drop(request_stream);
+        done_tx.send(()).unwrap();
+
+        assert_matches!(
+            incoming_req.accept().await.err().unwrap(),
+            ConnectionError::Remote(ConnectionErrorIncoming::ApplicationClose{error_code: code, ..})
+            if code == Code::H3_NO_ERROR.value()
+        );
+    };
+
+    tokio::join!(server_fut, client_fut);
+}
+
 /// A client learns from `received_reset` that the server reset the response, without reading.
 #[tokio::test]
 async fn client_received_reset_by_server() {

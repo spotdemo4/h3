@@ -127,6 +127,11 @@ where
     /// [`RequestStream::stop_sending`]. A client that cancels the request after sending all of
     /// the body stops the response instead, which [`RequestStream::stopped`] reports.
     ///
+    /// While part of the body has arrived and is waiting to be read, this may stay pending even if
+    /// the client resets the request. The reset discards that data, so the next
+    /// [`RequestStream::recv_data`] fails with it at once. Poll this together with whatever lets
+    /// the application read again.
+    ///
     /// After a reset, receiving the rest of the request fails with
     /// [`StreamError::RemoteTerminate`].
     pub async fn received_reset(&mut self) -> Result<Option<Code>, StreamError> {

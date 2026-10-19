@@ -245,6 +245,11 @@ where
     /// once the response can no longer be reset, after it was read to the end or after
     /// [`RequestStream::stop_sending`].
     ///
+    /// While part of the response has arrived and is waiting to be read, this may stay pending
+    /// even if the server resets it. The reset discards that data, so the next
+    /// [`RequestStream::recv_data`] fails with it at once. Poll this together with whatever lets
+    /// the application read again.
+    ///
     /// After a reset, receiving the rest of the response fails with
     /// [`StreamError::RemoteTerminate`].
     pub async fn received_reset(&mut self) -> Result<Option<Code>, StreamError> {

@@ -392,8 +392,8 @@ pub struct RecvStream {
     stream: quinn::RecvStream,
     id: StreamId,
     is_0rtt: bool,
-    // The code of a reset seen by `poll_received_reset`. Quinn frees the stream once it reports
-    // the reset there, so reads would no longer see it.
+    // The code of a reset seen by `poll_received_reset`. Quinn reports a reset to one read only,
+    // and later reads see the end of the stream instead.
     reset: Option<VarInt>,
 }
 
@@ -448,11 +448,22 @@ impl quic::RecvStream for RecvStream {
         if let Some(code) = self.reset {
             return Poll::Ready(Ok(Some(code.into_inner())));
         }
-        // Like `read_chunk`, `received_reset` is cancel-safe.
-        let result = ready!(pin!(self.stream.received_reset()).poll(cx))
-            .map_err(convert_reset_error_to_stream_error)?;
-        self.reset = result;
-        Poll::Ready(Ok(result.map(VarInt::into_inner)))
+        // Quinn's `received_reset` would wait without reading, but Quinn 0.11.12 leaves its waker
+        // behind when the stream has already arrived in full, and reading the stream to the end
+        // then trips a debug assertion when it is dropped (fixed by quinn-rs/quinn@cdd7940, not
+        // yet released). An empty read registers a waker only when nothing is buffered, and the
+        // next data, FIN or reset on the stream clears it.
+        match ready!(pin!(self.stream.read_chunk(0, true)).poll(cx)) {
+            // The peer may still reset the stream, but waiting for that would need
+            // `received_reset`. A reset discards the buffered data, so the next read reports it.
+            Ok(Some(_)) => Poll::Pending,
+            Ok(None) | Err(ReadError::ClosedStream) => Poll::Ready(Ok(None)),
+            Err(ReadError::Reset(code)) => {
+                self.reset = Some(code);
+                Poll::Ready(Ok(Some(code.into_inner())))
+            }
+            Err(error) => Poll::Ready(Err(convert_read_error_to_stream_error(error))),
+        }
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, level = "trace"))]
@@ -500,17 +511,6 @@ fn convert_write_error_to_stream_error(error: quinn::WriteError) -> StreamErrorI
         error @ quinn::WriteError::ClosedStream | error @ quinn::WriteError::ZeroRttRejected => {
             StreamErrorIncoming::Unknown(Box::new(error))
         }
-    }
-}
-
-fn convert_reset_error_to_stream_error(error: quinn::ResetError) -> StreamErrorIncoming {
-    match error {
-        quinn::ResetError::ConnectionLost(connection_error) => {
-            StreamErrorIncoming::ConnectionErrorIncoming {
-                connection_error: convert_connection_error(connection_error),
-            }
-        }
-        error @ quinn::ResetError::ZeroRttRejected => StreamErrorIncoming::Unknown(Box::new(error)),
     }
 }
 
