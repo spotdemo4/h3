@@ -15,11 +15,11 @@ resolver = "2"
 # keeps using `h3::...`. Pushing a `v<version>` tag publishes them; see
 # .github/workflows/publish.yml.
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 repository = "https://github.com/spotdemo4/h3"
 
 [workspace.dependencies]
-h3 = { package = "trev-h3", version = "0.2.0", path = "h3" }
-h3-datagram = { package = "trev-h3-datagram", version = "0.2.0", path = "h3-datagram" }
-h3-quinn = { package = "trev-h3-quinn", version = "0.2.0", path = "h3-quinn" }
-h3-webtransport = { package = "trev-h3-webtransport", version = "0.2.0", path = "h3-webtransport" }
+h3 = { package = "trev-h3", version = "0.2.1", path = "h3" }
+h3-datagram = { package = "trev-h3-datagram", version = "0.2.1", path = "h3-datagram" }
+h3-quinn = { package = "trev-h3-quinn", version = "0.2.1", path = "h3-quinn" }
+h3-webtransport = { package = "trev-h3-webtransport", version = "0.2.1", path = "h3-webtransport" }
