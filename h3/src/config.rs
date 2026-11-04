@@ -52,7 +52,7 @@ pub struct Settings {
 pub(crate) struct WebTransportDrafts(u8);
 
 impl WebTransportDrafts {
-    pub(crate) const ALL: Self = Self(0b1111);
+    pub(crate) const ALL: Self = Self(0b11111);
 
     fn bit(draft: WebTransportDraft) -> u8 {
         match draft {
@@ -60,6 +60,7 @@ impl WebTransportDrafts {
             WebTransportDraft::Draft07 => 1 << 1,
             WebTransportDraft::Draft13 => 1 << 2,
             WebTransportDraft::Draft15 => 1 << 3,
+            WebTransportDraft::Draft17 => 1 << 4,
         }
     }
 
@@ -111,6 +112,10 @@ impl From<&frame::Settings> for Settings {
                 WebTransportDraft::Draft13,
             ),
             (frame::SettingId::WT_ENABLED, WebTransportDraft::Draft15),
+            (
+                frame::SettingId::WT_ENABLED_DRAFT17,
+                WebTransportDraft::Draft17,
+            ),
         ]
         .into_iter()
         .filter(|(id, _)| enabled(*id))
@@ -211,6 +216,12 @@ impl TryFrom<Config> for frame::Settings {
                     // SETTINGS_WT_ENABLED setting with a value of "1""
                     WebTransportDraft::Draft15 => {
                         settings.insert(frame::SettingId::WT_ENABLED, 1)?
+                    }
+                    // Draft 17 keeps the same wire format under a new codepoint. Its server
+                    // selects draft 17 if the client sends this codepoint and otherwise the latest
+                    // draft both support, which is what negotiate_webtransport_draft does.
+                    WebTransportDraft::Draft17 => {
+                        settings.insert(frame::SettingId::WT_ENABLED_DRAFT17, 1)?
                     }
                 }
             }
@@ -323,6 +334,7 @@ mod tests {
         );
         assert_eq!(frame.get(frame::SettingId::WT_MAX_SESSIONS), Some(1));
         assert_eq!(frame.get(frame::SettingId::WT_ENABLED), Some(1));
+        assert_eq!(frame.get(frame::SettingId::WT_ENABLED_DRAFT17), Some(1));
     }
 
     #[test]
@@ -340,6 +352,7 @@ mod tests {
         );
         assert_eq!(frame.get(frame::SettingId::WT_MAX_SESSIONS), None);
         assert_eq!(frame.get(frame::SettingId::WT_ENABLED), None);
+        assert_eq!(frame.get(frame::SettingId::WT_ENABLED_DRAFT17), None);
     }
 
     #[test]
@@ -362,18 +375,29 @@ mod tests {
             (frame::SettingId::WEBTRANSPORT_MAX_SESSIONS_DRAFT07, 1),
             (frame::SettingId::WT_MAX_SESSIONS, 1),
         ]);
-        let latest = peer(&[(frame::SettingId::WT_ENABLED, 1)]);
+        let draft15 = peer(&[(frame::SettingId::WT_ENABLED, 1)]);
+        let latest = peer(&[
+            (frame::SettingId::WT_ENABLED, 1),
+            (frame::SettingId::WT_ENABLED_DRAFT17, 1),
+        ]);
         let none = peer(&[(frame::SettingId::ENABLE_WEBTRANSPORT, 0)]);
 
         let all = local(&WebTransportDraft::ALL);
         assert_eq!(all.negotiate_webtransport_draft(&legacy), Some(Draft02));
         assert_eq!(all.negotiate_webtransport_draft(&hybrid), Some(Draft13));
-        assert_eq!(all.negotiate_webtransport_draft(&latest), Some(Draft15));
+        assert_eq!(all.negotiate_webtransport_draft(&draft15), Some(Draft15));
+        assert_eq!(all.negotiate_webtransport_draft(&latest), Some(Draft17));
         assert_eq!(all.negotiate_webtransport_draft(&none), None);
         assert!(!none.enable_webtransport());
 
         let old = local(&[Draft02, Draft07]);
         assert_eq!(old.negotiate_webtransport_draft(&hybrid), Some(Draft07));
         assert_eq!(old.negotiate_webtransport_draft(&latest), None);
+
+        let before17 = local(&[Draft02, Draft07, Draft13, Draft15]);
+        assert_eq!(
+            before17.negotiate_webtransport_draft(&latest),
+            Some(Draft15)
+        );
     }
 }

@@ -67,6 +67,38 @@ async fn draft15_client_with_webtransport_h3() {
 }
 
 #[tokio::test]
+async fn draft17_client_with_webtransport_h3() {
+    let outcome = negotiate(
+        &WebTransportDraft::ALL,
+        &[Draft17],
+        Protocol::WEB_TRANSPORT_H3,
+    )
+    .await;
+    assert_eq!(outcome.draft, Draft17);
+    assert_eq!(outcome.status, StatusCode::OK);
+    assert_eq!(outcome.draft_header, None);
+}
+
+#[tokio::test]
+async fn draft17_is_preferred_over_draft15() {
+    let outcome = negotiate(
+        &WebTransportDraft::ALL,
+        &[Draft15, Draft17],
+        Protocol::WEB_TRANSPORT_H3,
+    )
+    .await;
+    assert_eq!(outcome.draft, Draft17);
+    assert_eq!(outcome.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn draft15_server_with_draft15_and_draft17_client() {
+    let outcome = negotiate(&[Draft15], &[Draft15, Draft17], Protocol::WEB_TRANSPORT_H3).await;
+    assert_eq!(outcome.draft, Draft15);
+    assert_eq!(outcome.status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn uses_latest_draft_the_server_also_supports() {
     let outcome = negotiate(
         &[Draft02, Draft07],
