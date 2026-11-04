@@ -24,6 +24,7 @@
 [![draft-14](https://img.shields.io/badge/draft--14-2ea44f)](https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-14)
 [![draft-15](https://img.shields.io/badge/draft--15-2ea44f)](https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-15)
 [![draft-16](https://img.shields.io/badge/draft--16-2ea44f)](https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-16)
+[![draft-17](https://img.shields.io/badge/draft--17-2ea44f)](https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-17)
 
 This is a fork of [hyperium/h3](https://github.com/hyperium/h3) that makes `h3-webtransport` work with the WebTransport implementations in Chrome, Firefox and Safari, and with clients of newer drafts of [WebTransport over HTTP/3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/). The browser badges show the latest results of interop tests that run against each browser on every push to `master` and every pull request. The draft badges list the drafts a server built on this fork can negotiate.
 
