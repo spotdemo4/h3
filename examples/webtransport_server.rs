@@ -28,9 +28,9 @@ struct Opt {
     #[structopt(
         long,
         use_delimiter = true,
-        default_value = "02,07,13,15",
+        default_value = "02,07,13,15,17",
         parse(try_from_str = parse_draft),
-        help = "WebTransport drafts to advertise: 02, 07, 13 and/or 15"
+        help = "WebTransport drafts to advertise: 02, 07, 13, 15 and/or 17"
     )]
     pub drafts: Vec<WebTransportDraft>,
 }
@@ -41,6 +41,7 @@ fn parse_draft(s: &str) -> Result<WebTransportDraft, String> {
         "07" => WebTransportDraft::Draft07,
         "13" => WebTransportDraft::Draft13,
         "15" => WebTransportDraft::Draft15,
+        "17" => WebTransportDraft::Draft17,
         _ => return Err(format!("unknown WebTransport draft {s}")),
     })
 }

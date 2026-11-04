@@ -407,6 +407,7 @@ impl SettingId {
                 | SettingId::WEBTRANSPORT_MAX_SESSIONS_DRAFT07
                 | SettingId::WT_MAX_SESSIONS
                 | SettingId::WT_ENABLED
+                | SettingId::WT_ENABLED_DRAFT17
                 | SettingId::H3_DATAGRAM,
         )
     }
@@ -463,6 +464,8 @@ setting_identifiers! {
     WT_MAX_SESSIONS = 0x14e9cd29,
     // https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-15#section-9.2
     WT_ENABLED = 0x2c7cf000,
+    // https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-17#section-9.2
+    WT_ENABLED_DRAFT17 = 0x20b8933b,
 }
 
 /// Upper bound on the entries of a SETTINGS frame, sent or received.
@@ -705,6 +708,7 @@ mod tests {
             SettingId::WEBTRANSPORT_MAX_SESSIONS_DRAFT07,
             SettingId::WT_MAX_SESSIONS,
             SettingId::WT_ENABLED,
+            SettingId::WT_ENABLED_DRAFT17,
         ];
         assert!(supported.iter().all(|id| id.is_supported()));
 

@@ -56,6 +56,7 @@ The drafts fall into groups that share a SETTINGS codepoint and a wire format:
 | 07–11 | `SETTINGS_WEBTRANSPORT_MAX_SESSIONS` (`0xc671706a`) | `Draft07` | Safari 26 |
 | 13–14 | `SETTINGS_WT_MAX_SESSIONS` (`0x14e9cd29`) | `Draft13` | Safari 26 |
 | 15–16 | `SETTINGS_WT_ENABLED` (`0x2c7cf000`), upgrade token `webtransport-h3` | `Draft15` | none of these browsers yet |
+| 17 | `SETTINGS_WT_ENABLED` (`0x20b8933b`), upgrade token `webtransport-h3` | `Draft17` | none of these browsers yet |
 
 Not supported:
 

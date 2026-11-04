@@ -90,14 +90,17 @@ pub enum WebTransportDraft {
     Draft13,
     /// Drafts 15 and 16, negotiated with `SETTINGS_WT_ENABLED` (0x2c7cf000).
     Draft15,
+    /// Draft 17, negotiated with `SETTINGS_WT_ENABLED` (0x20b8933b).
+    Draft17,
 }
 
 impl WebTransportDraft {
     /// Every supported draft, oldest first
-    pub const ALL: [WebTransportDraft; 4] = [
+    pub const ALL: [WebTransportDraft; 5] = [
         WebTransportDraft::Draft02,
         WebTransportDraft::Draft07,
         WebTransportDraft::Draft13,
         WebTransportDraft::Draft15,
+        WebTransportDraft::Draft17,
     ];
 }
