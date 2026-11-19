@@ -8,7 +8,7 @@
 
 [![Chrome](https://img.shields.io/github/check-runs/spotdemo4/h3/master?nameFilter=Chrome&label=Chrome&logo=googlechrome)](https://github.com/spotdemo4/h3/actions/workflows/webtransport-interop.yml)
 [![Firefox](https://img.shields.io/github/check-runs/spotdemo4/h3/master?nameFilter=Firefox&label=Firefox&logo=firefoxbrowser)](https://github.com/spotdemo4/h3/actions/workflows/webtransport-interop.yml)
-[![Safari](https://img.shields.io/github/check-runs/spotdemo4/h3/master?nameFilter=Safari&label=Safari&logo=safari)](https://github.com/spotdemo4/h3/actions/workflows/webtransport-interop.yml)
+[![Safari](https://trev.zip/forks/h3/actions/workflows/safari.yml/badge.svg?branch=master&label=Safari&logo=safari)](https://trev.zip/forks/h3/actions?workflow=safari.yml)
 
 [![draft-02](https://img.shields.io/badge/draft--02-2ea44f)](https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-02)
 [![draft-03](https://img.shields.io/badge/draft--03-2ea44f)](https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-03)
@@ -26,7 +26,7 @@
 [![draft-16](https://img.shields.io/badge/draft--16-2ea44f)](https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-16)
 [![draft-17](https://img.shields.io/badge/draft--17-2ea44f)](https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3-17)
 
-This is a fork of [hyperium/h3](https://github.com/hyperium/h3) that makes `h3-webtransport` work with the WebTransport implementations in Chrome, Firefox and Safari, and with clients of newer drafts of [WebTransport over HTTP/3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/). The browser badges show the latest results of interop tests that run against each browser on every push to `master` and every pull request. The draft badges list the drafts a server built on this fork can negotiate.
+This is a fork of [hyperium/h3](https://github.com/hyperium/h3) that makes `h3-webtransport` work with the WebTransport implementations in Chrome, Firefox and Safari, and with clients of newer drafts of [WebTransport over HTTP/3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/). The browser badges show the latest results of interop tests that run against each browser on every push to `master`. The draft badges list the drafts a server built on this fork can negotiate.
 
 The changes are meant to go upstream. They address [hyperium/h3#347](https://github.com/hyperium/h3/issues/347) (Safari cannot establish a session), [hyperium/h3#349](https://github.com/hyperium/h3/issues/349) (no API to close a session), [hyperium/h3#350](https://github.com/hyperium/h3/issues/350) (no way to notice STOP_SENDING without writing), [hyperium/h3#352](https://github.com/hyperium/h3/issues/352) (no way to notice RESET_STREAM without reading), [hyperium/h3#353](https://github.com/hyperium/h3/issues/353) (`AsyncWrite` reports every stream error as `io::ErrorKind::Other`), [hyperium/h3#354](https://github.com/hyperium/h3/issues/354) (an invalid CONNECT gets a 400 but still returns a session), [hyperium/h3#355](https://github.com/hyperium/h3/issues/355) (`max_webtransport_sessions` is advertised but not enforced), and [hyperium/h3#376](https://github.com/hyperium/h3/issues/376) (a unidirectional stream is not accepted until more data follows its header).
 
@@ -45,7 +45,7 @@ The changes are meant to go upstream. They address [hyperium/h3#347](https://git
   - A SETTINGS frame can hold every setting a browser sends, and encoding the largest one no longer panics.
   - A unidirectional stream is accepted as soon as its header arrives. If the session ID or push ID came in the same read as the stream type, `accept_uni` used to wait for more data, and a stream with only a header and FIN was dropped.
   - `AsyncRead` and `AsyncWrite` on streams report a reset or stopped stream as `ConnectionReset`, a timeout as `TimedOut`, and a closed connection as `ConnectionAborted`, instead of every error as `Other`. The `StreamErrorIncoming` with the error code is still the inner error.
-- **Browser interop tests** ([`ci/webtransport-interop`](ci/webtransport-interop)) run `examples/webtransport_server.rs` against Chrome and Firefox on Linux and Safari on macOS. They cover streams in both directions, datagrams, drain, and closing from either side.
+- **Browser interop tests** ([`ci/webtransport-interop`](ci/webtransport-interop)) run `examples/webtransport_server.rs` against Chrome and Firefox on GitHub's Linux runners, and against Safari 27 on a self-hosted macOS runner of the [trev.zip/forks/h3](https://trev.zip/forks/h3) mirror. They cover streams in both directions, datagrams, drain, and closing from either side.
 
 ## WebTransport drafts
 
@@ -70,7 +70,7 @@ Safari 26 offers drafts 07 and 13 but only connects if the server advertises dra
 
 ## Browser notes
 
-- The network process in Safari 26 and 27 (last checked with 27.0) crashes when a frame of an unknown type follows `WT_CLOSE_SESSION`, so `h3-webtransport` sends no grease frame on the CONNECT stream (reported to WebKit; the tag [`webkit-wt-close-crash`](https://github.com/spotdemo4/h3/tree/webkit-wt-close-crash) reproduces it).
+- The network process in Safari 26 and 27 (last checked with 27.0) crashes when a frame of an unknown type follows `WT_CLOSE_SESSION`, so `h3-webtransport` sends no grease frame on the CONNECT stream. It is reported as [WebKit bug 327834](https://bugs.webkit.org/show_bug.cgi?id=327834), which Apple believes is fixed in macOS 27.2; the tag [`webkit-wt-close-crash`](https://github.com/spotdemo4/h3/tree/webkit-wt-close-crash) reproduces it.
 - Chrome has no `WebTransport.draining`, and Firefox ignores `WT_DRAIN_SESSION`, so only Safari tells the page about a drain.
 - Firefox closes the QUIC connection right after a session closes. Await `WebTransportSession::closed()` to learn how the session ended.
 

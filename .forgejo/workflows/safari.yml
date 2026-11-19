@@ -1,7 +1,9 @@
 name: Safari interop
 
 # Runs examples/webtransport_server.rs against Safari 27 on the self-hosted macOS 27 runner.
-# GitHub's workflow tests Safari 26 on macos-26; this one covers the next Safari.
+# Chrome and Firefox run on GitHub (.github/workflows/webtransport-interop.yml); Safari runs
+# here because GitHub's macOS runners rarely pick up jobs. The README's Safari badge shows
+# this workflow's result on master.
 #
 # Only the first test decides the job's result. The certificate hash and drafts 02 and 07
 # tests may fail without failing the job.
