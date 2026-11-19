@@ -269,8 +269,8 @@ where
         let session_id = connect_stream_id.into();
         let conn_inner = &mut conn.inner.conn;
         let opener = Mutex::new(conn_inner.opener());
-        // Safari 26 crashes its network process when a frame of an unknown type, such as the
-        // grease frame h3 sends when finishing a stream, follows a WT_CLOSE_SESSION capsule.
+        // Safari 26 and 27 crash their network process when a frame of an unknown type, such as
+        // the grease frame h3 sends when finishing a stream, follows a WT_CLOSE_SESSION capsule.
         stream.disable_grease();
         let (send, recv) = stream.split();
 

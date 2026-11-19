@@ -70,7 +70,7 @@ Safari 26 offers drafts 07 and 13 but only connects if the server advertises dra
 
 ## Browser notes
 
-- Safari 26's network process crashes when a frame of an unknown type follows `WT_CLOSE_SESSION`, so `h3-webtransport` sends no grease frame on the CONNECT stream (reported to WebKit; the tag [`webkit-wt-close-crash`](https://github.com/spotdemo4/h3/tree/webkit-wt-close-crash) reproduces it).
+- The network process in Safari 26 and 27 (last checked with 27.0) crashes when a frame of an unknown type follows `WT_CLOSE_SESSION`, so `h3-webtransport` sends no grease frame on the CONNECT stream (reported to WebKit; the tag [`webkit-wt-close-crash`](https://github.com/spotdemo4/h3/tree/webkit-wt-close-crash) reproduces it).
 - Chrome has no `WebTransport.draining`, and Firefox ignores `WT_DRAIN_SESSION`, so only Safari tells the page about a drain.
 - Firefox closes the QUIC connection right after a session closes. Await `WebTransportSession::closed()` to learn how the session ended.
 
