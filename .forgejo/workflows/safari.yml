@@ -1,0 +1,99 @@
+name: Safari interop
+
+# Runs examples/webtransport_server.rs against Safari 27 on the self-hosted macOS 27 runner.
+# GitHub's workflow tests Safari 26 on macos-26; this one covers the next Safari.
+#
+# Only the first test decides the job's result. The certificate hash and drafts 02 and 07
+# tests may fail without failing the job.
+#
+# Having a .forgejo/workflows directory also stops Forgejo from running .github/workflows,
+# whose ubuntu-latest jobs no runner here picks up.
+on:
+  push:
+  workflow_dispatch:
+
+# The runner drives the one Safari on the machine, so runs must not overlap.
+concurrency:
+  group: safari-interop
+  cancel-in-progress: false
+
+jobs:
+  safari:
+    name: Safari
+    runs-on: macos-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Show versions
+        run: |
+          sw_vers
+          echo "Safari $(defaults read /Applications/Safari.app/Contents/Info CFBundleShortVersionString)"
+          safaridriver --version
+          cargo --version
+
+      - name: Enable safaridriver
+        run: sudo -n safaridriver --enable
+
+      - name: Build server
+        env:
+          OUT: ${{ runner.temp }}/wt-interop
+        run: |
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          touch "$OUT/started"
+          cargo build --example webtransport_server
+
+      - name: Run interop test
+        env:
+          WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop/trusted
+        run: ci/webtransport-interop/interop.sh safari trusted
+
+      - name: Run interop test (certificate hashes)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop/hash
+        run: ci/webtransport-interop/interop.sh safari hash
+
+      # Safari 26 cancels its CONNECT unless the server advertises draft 07. This shows whether
+      # Safari 27 still connects when draft 07 is the newest draft offered.
+      - name: Run interop test (drafts 02 and 07)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          WT_INTEROP_OUT: ${{ runner.temp }}/wt-interop/drafts-02-07
+          WT_DRAFTS: "02,07"
+        run: ci/webtransport-interop/interop.sh safari trusted
+
+      - name: Collect crash reports
+        if: always()
+        env:
+          OUT: ${{ runner.temp }}/wt-interop
+        run: |
+          mkdir -p "$OUT/crashes"
+          find ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports -newer "$OUT/started" \
+            \( -iname '*webkit*' -o -iname '*safari*' -o -iname '*webcontent*' -o -iname '*networking*' \) \
+            -exec cp {} "$OUT/crashes/" \; 2>/dev/null || true
+          ls -la "$OUT/crashes"
+          log show --last 30m --style compact \
+            --predicate 'process BEGINSWITH "com.apple.WebKit" OR process == "Safari" OR process == "safaridriver" OR process == "ReportCrash"' \
+            2>/dev/null | tail -n 20000 >"$OUT/crashes/unified.log" || true
+          grep -iE "crash|terminat|jetsam|exception|webtransport" "$OUT/crashes/unified.log" | tail -n 80 || true
+
+      # The runner is self-hosted, so take the test CAs the trusted runs added back out of the
+      # System keychain.
+      - name: Remove test CAs
+        if: always()
+        run: |
+          while sha=$(security find-certificate -c "h3 interop test CA" -Z /Library/Keychains/System.keychain 2>/dev/null | awk '/SHA-1/ {print $3}' | head -n1) && [ -n "$sha" ]; do
+            sudo -n security delete-certificate -Z "$sha" /Library/Keychains/System.keychain
+            echo "removed test CA $sha"
+          done
+
+      - name: Upload logs
+        if: always()
+        uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
+        with:
+          name: wt-interop-safari
+          path: ${{ runner.temp }}/wt-interop
